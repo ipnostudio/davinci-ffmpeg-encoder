@@ -43,6 +43,7 @@ jobs:
         Get-ChildItem "$ffmpegBin/avutil-*.dll"     | Copy-Item -Destination $bundlePath
         Get-ChildItem "$ffmpegBin/swscale-*.dll"    | Copy-Item -Destination $bundlePath
         Get-ChildItem "$ffmpegBin/swresample-*.dll" | Copy-Item -Destination $bundlePath
+        Get-ChildItem "$ffmpegBin/libfdk-aac-*.dll" | Copy-Item -Destination $bundlePath
       shell: pwsh
 
     - uses: actions/upload-artifact@v4
