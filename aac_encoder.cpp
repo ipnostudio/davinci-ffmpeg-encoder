@@ -285,9 +285,11 @@ StatusCode AACEncoder::OpenCodecContext(const AACSettings& s) {
 
     // Channel layout (FFmpeg 6+ API)
     if (s.channels == 6) {
-        av_channel_layout_copy(&ctx_->ch_layout, &(AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1);
+        AVChannelLayout layout = AV_CHANNEL_LAYOUT_5POINT1;
+        av_channel_layout_copy(&ctx_->ch_layout, &layout);
     } else {
-        av_channel_layout_copy(&ctx_->ch_layout, &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO);
+        AVChannelLayout layout = AV_CHANNEL_LAYOUT_STEREO;
+        av_channel_layout_copy(&ctx_->ch_layout, &layout);
     }
 
     // ---- Force CBR via -b:a (bit_rate already set; ensure no VBR) ---
@@ -322,9 +324,14 @@ StatusCode AACEncoder::OpenCodecContext(const AACSettings& s) {
     }
 
     // ---- SwrContext: DR sends int16_t interleaved → float planar ----
-    AVChannelLayout srcLayout = (s.channels == 6)
-        ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1
-        : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+    AVChannelLayout srcLayout;
+    if (s.channels == 6) {
+        AVChannelLayout tmp = AV_CHANNEL_LAYOUT_5POINT1;
+        av_channel_layout_copy(&srcLayout, &tmp);
+    } else {
+        AVChannelLayout tmp = AV_CHANNEL_LAYOUT_STEREO;
+        av_channel_layout_copy(&srcLayout, &tmp);
+    }
 
     int swrRet = swr_alloc_set_opts2(
         &swrCtx_,
