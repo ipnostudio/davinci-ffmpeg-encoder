@@ -41,6 +41,7 @@ set(SRCS
         uisettings_controller.cpp
         x264_encoder.cpp
         x265_encoder.cpp
+        aac_encoder.cpp
 )
 
 set(HEADERS
