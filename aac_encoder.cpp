@@ -4,34 +4,39 @@
 #include <algorithm>
 
 extern "C" {
-#include <libavutil/channel_layout.h>
-#include <libavutil/samplefmt.h>
 #include <libavutil/opt.h>
+#include <libavutil/mem.h>
 }
 
 namespace IOPlugin {
 
-constexpr uint8_t AACEncoder::UUID[16];
+const uint8_t AACEncoder::UUID[16] = {
+    0xfa, 0x3c, 0x11, 0xe8, 0x9a, 0x5b, 0x4b, 0xd1,
+    0xb2, 0x7f, 0xc0, 0x2d, 0x18, 0xaa, 0x62, 0x10
+};
 
-static const char* kKeySampleRate = "aac_sr";
-static const char* kKeyBitRate    = "aac_br";
-static const char* kKeyChannels   = "aac_ch";
+AACEncoder::AACEncoder()  = default;
+
+AACEncoder::~AACEncoder() {
+    if (m_ctx) {
+        if (m_ctx->frame)    av_frame_free(&m_ctx->frame);
+        if (m_ctx->pkt)      av_packet_free(&m_ctx->pkt);
+        if (m_ctx->codecCtx) avcodec_free_context(&m_ctx->codecCtx);
+    }
+}
 
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     HostPropertyCollectionRef codecInfo;
+    if (!codecInfo.IsValid()) return errAlloc;
 
     codecInfo.SetProperty(pIOPropUUID, propTypeUInt8, UUID, 16);
-
-    const char* group = "AAC Audio (FFmpeg)";
-    codecInfo.SetProperty(pIOPropGroup, propTypeString, group, (int)strlen(group));
 
     const char* name = "AAC 320kb/s (FFmpeg)";
     codecInfo.SetProperty(pIOPropName, propTypeString, name, (int)strlen(name));
 
-   // FourCC para AAC en MP4 — bytes explícitos para evitar problema de endianness en Windows
-    uint8_t fourCC[4] = { 0x6D, 0x70, 0x34, 0x61 }; // 'm','p','4','a'
-    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt8, fourCC, 4);
+    uint32_t fourCC = 'aac ';
+    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);
 
     uint32_t mediaType = mediaAudio;
     codecInfo.SetProperty(pIOPropMediaType, propTypeUInt32, &mediaType, 1);
@@ -39,12 +44,15 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     uint32_t dir = dirEncode;
     codecInfo.SetProperty(pIOPropCodecDirection, propTypeUInt32, &dir, 1);
 
-    // NO registrar BitDepth para audio AAC — AAC es lossy y no tiene bit depth
-    // Resolve rechaza la pista de audio si se declara este parámetro
+    // Bit depths: 16 y 24 (igual que el plugin que funciona)
+    uint32_t bitDepths[] = { 16, 24 };
+    codecInfo.SetProperty(pIOPropBitDepth, propTypeUInt32, bitDepths, 2);
 
-    uint8_t threadSafe = 1;
-    codecInfo.SetProperty(pIOPropThreadSafe, propTypeUInt8, &threadSafe, 1);
+    // Sample rates soportados
+    uint32_t sampleRates[] = { 44100, 48000 };
+    codecInfo.SetProperty(pIOPropSamplingRate, propTypeUInt32, sampleRates, 2);
 
+    // Containers
     const char containers[] = "mp4\0mov\0mkv";
     codecInfo.SetProperty(pIOPropContainerList, propTypeString,
                           containers, sizeof(containers));
@@ -55,265 +63,252 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
                                            HostListRef* p_pSettingsList) {
-    int32_t curSR = 48000;
-    int32_t curBR = 320000;
-    int32_t curCH = 2;
+    int32_t curBR = 320;
+    if (p_pValues) p_pValues->GetINT32("aac_br", curBR);
 
-    if (p_pValues) {
-        p_pValues->GetINT32(kKeySampleRate, curSR);
-        p_pValues->GetINT32(kKeyBitRate,    curBR);
-        p_pValues->GetINT32(kKeyChannels,   curCH);
-    }
-
-    {
-        HostUIConfigEntryRef item(kKeySampleRate);
-        item.MakeRadioBox("Sample Rate",
-            {"48000 Hz (Standard)", "44100 Hz (CD)"},
-            {48000, 44100}, curSR);
-        item.SetTriggersUpdate(true);
-        if (!p_pSettingsList->Append(&item)) return errFail;
-    }
-    {
-        HostUIConfigEntryRef sep("aac_sep1");
-        sep.MakeSeparator();
-        p_pSettingsList->Append(&sep);
-    }
-    {
-        HostUIConfigEntryRef item(kKeyBitRate);
-        item.MakeRadioBox("Audio Bitrate (CBR)",
-            {"320 kb/s (Recommended)", "256 kb/s", "192 kb/s", "128 kb/s"},
-            {320000, 256000, 192000, 128000}, curBR);
-        item.SetTriggersUpdate(true);
-        if (!p_pSettingsList->Append(&item)) return errFail;
-    }
-    {
-        HostUIConfigEntryRef sep("aac_sep2");
-        sep.MakeSeparator();
-        p_pSettingsList->Append(&sep);
-    }
-    {
-        HostUIConfigEntryRef item(kKeyChannels);
-        item.MakeRadioBox("Channels",
-            {"Stereo (2ch)", "5.1 Surround (6ch)"},
-            {2, 6}, curCH);
-        item.SetTriggersUpdate(true);
-        if (!p_pSettingsList->Append(&item)) return errFail;
-    }
+    // Bitrate slider: 128–512 kbps, paso 64
+    HostUIConfigEntryRef item("aac_br");
+    item.MakeSlider("Bit Rate", "kbps", curBR, 128, 512, 64, 320);
+    item.SetTriggersUpdate(true);
+    if (!item.IsSuccess() || !p_pSettingsList->Append(&item)) return errFail;
 
     return errNone;
 }
 
 // ---------------------------------------------------------------------------
-StatusCode AACEncoder::DoInit(HostPropertyCollectionRef*) {
-    return errNone;
-}
-
+// DoInit — aquí se inicializa FFmpeg (igual que el plugin de Toxblh)
 // ---------------------------------------------------------------------------
-StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
-    p_pBuff->GetINT32(kKeySampleRate, sampleRate_);
-    p_pBuff->GetINT32(kKeyBitRate,    bitRate_);
-    p_pBuff->GetINT32(kKeyChannels,   channels_);
+StatusCode AACEncoder::DoInit(HostPropertyCollectionRef* p_pProps) {
+    p_pProps->GetUINT32(pIOPropBitDepth,    m_bitDepth);
+    p_pProps->GetUINT32(pIOPropSamplingRate, m_sampleRate);
+    p_pProps->GetUINT32(pIOPropNumChannels,  m_numChannels);
 
-    if (sampleRate_ == 0) sampleRate_ = 48000;
-    if (bitRate_    == 0) bitRate_    = 320000;
-    if (channels_   == 0) channels_   = 2;
+    if (m_bitDepth == 0)    m_bitDepth    = 16;
+    if (m_sampleRate == 0)  m_sampleRate  = 48000;
+    if (m_numChannels == 0) m_numChannels = 2;
+
+    // Bitrate desde settings (viene de DoOpen, default aquí)
+    int bitRateBps = m_bitRate * 1000;  // m_bitRate en kbps
 
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (!codec) return errNoCodec;
-
-    ctx_ = avcodec_alloc_context3(codec);
-    if (!ctx_) return errAlloc;
-
-    ctx_->codec_id    = AV_CODEC_ID_AAC;
-    ctx_->codec_type  = AVMEDIA_TYPE_AUDIO;
-    ctx_->sample_rate = sampleRate_;
-    ctx_->bit_rate    = bitRate_;
-    ctx_->sample_fmt  = AV_SAMPLE_FMT_FLTP;
-    ctx_->profile     = AV_PROFILE_AAC_LOW;
-    ctx_->flags      |= AV_CODEC_FLAG_GLOBAL_HEADER;
-
-    {
-        AVChannelLayout tmp;
-        if (channels_ == 6) {
-            AVChannelLayout t = AV_CHANNEL_LAYOUT_5POINT1;
-            av_channel_layout_copy(&tmp, &t);
-        } else {
-            AVChannelLayout t = AV_CHANNEL_LAYOUT_STEREO;
-            av_channel_layout_copy(&tmp, &t);
-        }
-        av_channel_layout_copy(&ctx_->ch_layout, &tmp);
-        av_channel_layout_uninit(&tmp);
-    }
-
-    if (avcodec_open2(ctx_, codec, nullptr) < 0) {
-        avcodec_free_context(&ctx_);
+    if (!codec) {
+        g_Log(logLevelError, "AAC Plugin :: encoder not found");
         return errFail;
     }
 
-    frameSize_ = ctx_->frame_size > 0 ? ctx_->frame_size : 1024;
+    m_ctx.reset(new FFmpegAACContext());
+    m_ctx->codecCtx = avcodec_alloc_context3(codec);
+    if (!m_ctx->codecCtx) return errAlloc;
 
-    frame_ = av_frame_alloc();
-    if (!frame_) return errAlloc;
-    frame_->nb_samples  = frameSize_;
-    frame_->format      = AV_SAMPLE_FMT_FLTP;
-    frame_->sample_rate = sampleRate_;
-    av_channel_layout_copy(&frame_->ch_layout, &ctx_->ch_layout);
-    if (av_frame_get_buffer(frame_, 0) < 0) return errAlloc;
+    m_ctx->codecCtx->bit_rate    = bitRateBps;
+    m_ctx->codecCtx->sample_fmt  = AV_SAMPLE_FMT_FLTP;
+    m_ctx->codecCtx->sample_rate = (int)m_sampleRate;
+    m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
 
-     {
-        AVChannelLayout srcLayout;
-        if (channels_ == 6) {
-            AVChannelLayout t = AV_CHANNEL_LAYOUT_5POINT1;
-            av_channel_layout_copy(&srcLayout, &t);
-        } else {
-            AVChannelLayout t = AV_CHANNEL_LAYOUT_STEREO;
-            av_channel_layout_copy(&srcLayout, &t);
-        }
-        swr_alloc_set_opts2(&swrCtx_,
-            &ctx_->ch_layout, AV_SAMPLE_FMT_FLTP, sampleRate_,
-            &srcLayout,       AV_SAMPLE_FMT_S16,  sampleRate_,
-            0, nullptr);
-        av_channel_layout_uninit(&srcLayout);
-    }
-    if (!swrCtx_ || swr_init(swrCtx_) < 0) return errFail;
+    av_channel_layout_default(&m_ctx->codecCtx->ch_layout, (int)m_numChannels);
 
-    pkt_ = av_packet_alloc();
-    if (!pkt_) return errAlloc;
-
-    if (ctx_->extradata && ctx_->extradata_size > 0) {
-        p_pBuff->SetProperty(pIOPropMagicCookie, propTypeUInt8,
-                             ctx_->extradata, ctx_->extradata_size);
-        uint32_t cookieType = 'mp4a';
-        p_pBuff->SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1);
+    if (avcodec_open2(m_ctx->codecCtx, codec, nullptr) < 0) {
+        g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
+        avcodec_free_context(&m_ctx->codecCtx);
+        return errFail;
     }
 
-    uint8_t noMultiPass = 0;
-    p_pBuff->SetProperty(pIOPropMultiPass, propTypeUInt8, &noMultiPass, 1);
+    m_ctx->frameSize = m_ctx->codecCtx->frame_size;
+    m_ctx->pts       = 0;
+
+    m_ctx->frame = av_frame_alloc();
+    m_ctx->frame->nb_samples = m_ctx->frameSize;
+    m_ctx->frame->format     = AV_SAMPLE_FMT_FLTP;
+    av_channel_layout_copy(&m_ctx->frame->ch_layout, &m_ctx->codecCtx->ch_layout);
+    av_frame_get_buffer(m_ctx->frame, 0);
+
+    m_ctx->pkt = av_packet_alloc();
+
+    // Init ring buffer
+    m_channels  = m_numChannels;
+    m_frameSize = (size_t)m_ctx->frameSize;
+    m_ringBuf.assign(m_channels, std::vector<float>(m_frameSize, 0.0f));
+    m_ringFill = 0;
+
+    g_Log(logLevelWarn, "AAC Plugin :: DoInit OK — SR=%u, CH=%u, BR=%d bps, FrameSize=%d",
+          m_sampleRate, m_numChannels, bitRateBps, m_ctx->frameSize);
 
     return errNone;
 }
 
 // ---------------------------------------------------------------------------
+// DoOpen — carga settings y pasa info a Resolve
+// ---------------------------------------------------------------------------
+StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
+    p_pBuff->GetINT32("aac_br", m_bitRate);
+    if (m_bitRate <= 0) m_bitRate = 320;
+
+    // Informar el bitrate a Resolve
+    uint64_t br = (uint64_t)m_bitRate * 1000;
+    p_pBuff->SetProperty(pIOPropBitRate, propTypeUInt32, &br, 1);
+
+    return errNone;
+}
+
+// ---------------------------------------------------------------------------
+// DoProcess — recibe PCM de Resolve, acumula y codifica
+// ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoProcess(HostBufferRef* p_pBuff) {
-    if (!p_pBuff || !p_pBuff->IsValid())
-        return DrainEncoder();
+    if (!m_ctx || !m_ctx->codecCtx) return errFail;
+
+    if (p_pBuff == nullptr) {
+        // Flush: padding + drain
+        if (m_ringFill > 0) {
+            PadRingBuffer();
+            AVFrame* tmp = av_frame_alloc();
+            tmp->format     = AV_SAMPLE_FMT_FLTP;
+            tmp->nb_samples = (int)m_frameSize;
+            av_channel_layout_copy(&tmp->ch_layout, &m_ctx->codecCtx->ch_layout);
+            av_frame_get_buffer(tmp, 0);
+
+            for (size_t ch = 0; ch < m_channels; ++ch)
+                memcpy(tmp->extended_data[ch], m_ringBuf[ch].data(), m_frameSize * sizeof(float));
+
+            tmp->pts = m_ctx->pts;
+            m_ctx->pts += (int)m_frameSize;
+            avcodec_send_frame(m_ctx->codecCtx, tmp);
+            av_frame_free(&tmp);
+            SendEncodedPackets();
+            ResetRingBuffer();
+        }
+        // Drain encoder
+        avcodec_send_frame(m_ctx->codecCtx, nullptr);
+        SendEncodedPackets();
+        return errNone;
+    }
 
     char*  buf     = nullptr;
     size_t bufSize = 0;
-    if (!p_pBuff->LockBuffer(&buf, &bufSize)) return errFail;
+    if (!p_pBuff->LockBuffer(&buf, &bufSize) || bufSize == 0)
+        return errNone;
 
-    const int numSamples = (int)(bufSize / (sizeof(int16_t) * channels_));
-    StatusCode err = ConvertAndEncode(reinterpret_cast<const uint8_t*>(buf), numSamples);
+    int bytesPerSample = (m_bitDepth == 24) ? 3 : 2;
+    int totalSamples   = (int)(bufSize / ((size_t)m_channels * bytesPerSample));
+
+    // Convertir a float planar
+    std::vector<std::vector<float>> planar(m_channels, std::vector<float>(totalSamples, 0.0f));
+
+    if (m_bitDepth == 24) {
+        unsigned char* src = (unsigned char*)buf;
+        for (int i = 0; i < totalSamples; ++i)
+            for (size_t ch = 0; ch < m_channels; ++ch) {
+                int idx = (i * (int)m_channels + (int)ch) * 3;
+                int32_t s = ((int32_t)src[idx+2] << 24) | ((int32_t)src[idx+1] << 16) | ((int32_t)src[idx] << 8);
+                s >>= 8;
+                planar[ch][i] = s / 8388608.0f;
+            }
+    } else {
+        int16_t* src = (int16_t*)buf;
+        for (int i = 0; i < totalSamples; ++i)
+            for (size_t ch = 0; ch < m_channels; ++ch)
+                planar[ch][i] = src[i * (int)m_channels + (int)ch] / 32768.0f;
+    }
+
     p_pBuff->UnlockBuffer();
-    return err;
+
+    // Acumular y codificar por frames
+    int done = 0;
+    while (done < totalSamples) {
+        int canFill = (int)(m_frameSize - m_ringFill);
+        int toCopy  = std::min(totalSamples - done, canFill);
+
+        std::vector<const float*> ptrs(m_channels);
+        for (size_t ch = 0; ch < m_channels; ++ch)
+            ptrs[ch] = &planar[ch][done];
+        AddToRingBuffer(ptrs.data(), toCopy);
+        done += toCopy;
+
+        if (RingBufferFull()) {
+            AVFrame* tmp = av_frame_alloc();
+            tmp->format     = AV_SAMPLE_FMT_FLTP;
+            tmp->nb_samples = (int)m_frameSize;
+            av_channel_layout_copy(&tmp->ch_layout, &m_ctx->codecCtx->ch_layout);
+            av_frame_get_buffer(tmp, 0);
+
+            for (size_t ch = 0; ch < m_channels; ++ch)
+                memcpy(tmp->extended_data[ch], m_ringBuf[ch].data(), m_frameSize * sizeof(float));
+
+            tmp->pts = m_ctx->pts;
+            m_ctx->pts += (int)m_frameSize;
+
+            avcodec_send_frame(m_ctx->codecCtx, tmp);
+            av_frame_free(&tmp);
+            SendEncodedPackets();
+            ResetRingBuffer();
+        }
+    }
+
+    return errNone;
 }
 
 // ---------------------------------------------------------------------------
 void AACEncoder::DoFlush() {
-    DrainEncoder();
+    if (m_ctx && m_ctx->codecCtx)
+        avcodec_flush_buffers(m_ctx->codecCtx);
 }
 
 // ---------------------------------------------------------------------------
-StatusCode AACEncoder::ConvertAndEncode(const uint8_t* pcmData, int numSamples) {
-    std::vector<std::vector<float>> planars(channels_, std::vector<float>(numSamples));
-    std::vector<uint8_t*> planarPtrs(channels_);
-    for (int i = 0; i < channels_; ++i)
-        planarPtrs[i] = reinterpret_cast<uint8_t*>(planars[i].data());
-
-    const uint8_t* inPtr[1] = { pcmData };
-    int converted = swr_convert(swrCtx_, planarPtrs.data(), numSamples, inPtr, numSamples);
-    if (converted < 0) return errFail;
-
-    int done = 0;
-    while (done < converted) {
-        int inAccum = (int)(accumBuffer_.size() / channels_);
-        int canFill = frameSize_ - inAccum;
-        int toCopy  = std::min(converted - done, canFill);
-
-        for (int s = done; s < done + toCopy; ++s)
-            for (int c = 0; c < channels_; ++c)
-                accumBuffer_.push_back(planars[c][s]);
-        done += toCopy;
-
-        if ((int)(accumBuffer_.size() / channels_) >= frameSize_) {
-            if (av_frame_make_writable(frame_) < 0) return errFail;
-
-            for (int c = 0; c < channels_; ++c) {
-                float* dst = reinterpret_cast<float*>(frame_->data[c]);
-                for (int s = 0; s < frameSize_; ++s)
-                    dst[s] = accumBuffer_[(size_t)(s * channels_ + c)];
-            }
-            frame_->pts = ptsAccum_;
-            ptsAccum_  += frameSize_;
-            accumBuffer_.erase(accumBuffer_.begin(),
-                               accumBuffer_.begin() + frameSize_ * channels_);
-
-            if (avcodec_send_frame(ctx_, frame_) < 0) return errFail;
-            DrainReadyPackets();
-        }
-    }
-    return errMoreData;
-}
-
-// ---------------------------------------------------------------------------
-StatusCode AACEncoder::DrainReadyPackets() {
+void AACEncoder::SendEncodedPackets() {
     while (true) {
-        int ret = avcodec_receive_packet(ctx_, pkt_);
-        if (ret == AVERROR(EAGAIN)) { av_packet_unref(pkt_); return errMoreData; }
-        if (ret == AVERROR_EOF)     { av_packet_unref(pkt_); return errNone; }
-        if (ret < 0)                { av_packet_unref(pkt_); return errFail; }
-        SendOutputPacket(pkt_);
-        av_packet_unref(pkt_);
-    }
-}
+        int ret = avcodec_receive_packet(m_ctx->codecCtx, m_ctx->pkt);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
+        if (ret < 0) break;
 
-// ---------------------------------------------------------------------------
-StatusCode AACEncoder::DrainEncoder() {
-    if (!accumBuffer_.empty()) {
-        int inAccum = (int)(accumBuffer_.size() / channels_);
-        if (av_frame_make_writable(frame_) >= 0) {
-            for (int c = 0; c < channels_; ++c) {
-                float* dst = reinterpret_cast<float*>(frame_->data[c]);
-                for (int s = 0; s < frameSize_; ++s)
-                    dst[s] = (s < inAccum)
-                             ? accumBuffer_[(size_t)(s * channels_ + c)]
-                             : 0.0f;
-            }
-            frame_->pts = ptsAccum_;
-            ptsAccum_  += frameSize_;
-            accumBuffer_.clear();
-            avcodec_send_frame(ctx_, frame_);
-            DrainReadyPackets();
+        HostBufferRef outBuf(false);
+        outBuf.Resize(m_ctx->pkt->size);
+        char*  outData = nullptr;
+        size_t outSize = 0;
+        if (outBuf.LockBuffer(&outData, &outSize) && outSize >= (size_t)m_ctx->pkt->size) {
+            memcpy(outData, m_ctx->pkt->data, m_ctx->pkt->size);
+            outBuf.UnlockBuffer();
+
+            outBuf.SetProperty(pIOPropBitDepth,    propTypeUInt32, &m_bitDepth,    1);
+            outBuf.SetProperty(pIOPropSamplingRate, propTypeUInt32, &m_sampleRate, 1);
+            outBuf.SetProperty(pIOPropNumChannels,  propTypeUInt32, &m_numChannels,1);
+
+            uint8_t isKey = 0;
+            outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8,  &isKey, 1);
+
+            int64_t pts = m_ctx->pkt->pts;
+            int64_t dur = m_ctx->pkt->duration;
+            outBuf.SetProperty(pIOPropPTS,      propTypeInt64, &pts, 1);
+            outBuf.SetProperty(pIOPropDuration, propTypeInt64, &dur, 1);
+
+            // ← Así es como el plugin real envía el output
+            IPluginCodecRef::DoProcess(&outBuf);
         }
+        av_packet_unref(m_ctx->pkt);
     }
-    avcodec_send_frame(ctx_, nullptr);
-    while (true) {
-        int ret = avcodec_receive_packet(ctx_, pkt_);
-        if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) { av_packet_unref(pkt_); break; }
-        if (ret < 0) { av_packet_unref(pkt_); break; }
-        SendOutputPacket(pkt_);
-        av_packet_unref(pkt_);
-    }
-    return errNone;
 }
 
 // ---------------------------------------------------------------------------
-StatusCode AACEncoder::SendOutputPacket(AVPacket* pkt) {
-    HostBufferRef outBuf(false);
-    if (!outBuf.IsValid() || !outBuf.Resize(pkt->size)) return errAlloc;
+void AACEncoder::AddToRingBuffer(const float** planar, int samples) {
+    for (int i = 0; i < samples; ++i)
+        for (size_t ch = 0; ch < m_channels; ++ch)
+            if (m_ringFill < m_frameSize)
+                m_ringBuf[ch][m_ringFill] = planar[ch][i];
+    m_ringFill += (size_t)samples;  // separate from inner check
+}
 
-    char*  outPtr  = nullptr;
-    size_t outSize = 0;
-    if (!outBuf.LockBuffer(&outPtr, &outSize)) return errAlloc;
-    memcpy(outPtr, pkt->data, pkt->size);
+bool AACEncoder::RingBufferFull() const {
+    return m_ringFill >= m_frameSize;
+}
 
-    outBuf.SetProperty(pIOPropPTS,        propTypeInt64, &pkt->pts, 1);
-    outBuf.SetProperty(pIOPropDTS,        propTypeInt64, &pkt->dts, 1);
-    uint8_t isKey = 1;
-    outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8, &isKey, 1);
+void AACEncoder::PadRingBuffer() {
+    for (size_t ch = 0; ch < m_channels; ++ch)
+        for (size_t i = m_ringFill; i < m_frameSize; ++i)
+            m_ringBuf[ch][i] = 0.0f;
+}
 
-    m_pCallback->SendOutput(&outBuf);
-    return errNone;
+void AACEncoder::ResetRingBuffer() {
+    m_ringFill = 0;
+    for (auto& ch : m_ringBuf)
+        std::fill(ch.begin(), ch.end(), 0.0f);
 }
 
 } // namespace IOPlugin
