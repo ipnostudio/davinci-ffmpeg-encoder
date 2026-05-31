@@ -29,8 +29,9 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     const char* name = "AAC 320kb/s (FFmpeg)";
     codecInfo.SetProperty(pIOPropName, propTypeString, name, (int)strlen(name));
 
-    uint32_t fourCC = 'mp4a';
-    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);
+   // FourCC para AAC en MP4 — bytes explícitos para evitar problema de endianness en Windows
+    uint8_t fourCC[4] = { 0x6D, 0x70, 0x34, 0x61 }; // 'm','p','4','a'
+    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt8, fourCC, 4);
 
     uint32_t mediaType = mediaAudio;
     codecInfo.SetProperty(pIOPropMediaType, propTypeUInt32, &mediaType, 1);
@@ -38,8 +39,8 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     uint32_t dir = dirEncode;
     codecInfo.SetProperty(pIOPropCodecDirection, propTypeUInt32, &dir, 1);
 
-    uint32_t bitDepth = 16;
-    codecInfo.SetProperty(pIOPropBitDepth, propTypeUInt32, &bitDepth, 1);
+    // NO registrar BitDepth para audio AAC — AAC es lossy y no tiene bit depth
+    // Resolve rechaza la pista de audio si se declara este parámetro
 
     uint8_t threadSafe = 1;
     codecInfo.SetProperty(pIOPropThreadSafe, propTypeUInt8, &threadSafe, 1);
