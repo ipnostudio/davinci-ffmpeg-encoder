@@ -2,50 +2,60 @@
 
 #include "wrapper/plugin_api.h"
 #include <vector>
+#include <memory>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
-#include <libswresample/swresample.h>
 #include <libavutil/channel_layout.h>
 }
 
 namespace IOPlugin {
 
+struct FFmpegAACContext {
+    AVCodecContext* codecCtx  = nullptr;
+    AVFrame*        frame     = nullptr;
+    AVPacket*       pkt       = nullptr;
+    int             frameSize = 0;
+    int64_t         pts       = 0;
+};
+
 class AACEncoder final : public IPluginCodecRef {
 public:
-    static constexpr uint8_t UUID[16] = {
-        0xfa, 0x3c, 0x11, 0xe8, 0x9a, 0x5b, 0x4b, 0xd1,
-        0xb2, 0x7f, 0xc0, 0x2d, 0x18, 0xaa, 0x62, 0x10
-    };
+    static const uint8_t UUID[16];
 
     static StatusCode RegisterCodec(HostListRef* p_pList);
     static StatusCode GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
                                          HostListRef* p_pSettingsList);
 
+    AACEncoder();
+    ~AACEncoder();
+
 protected:
     StatusCode DoInit(HostPropertyCollectionRef* p_pProps) override;
-    StatusCode DoOpen(HostBufferRef* p_pBuff) override;
-    StatusCode DoProcess(HostBufferRef* p_pBuff) override;
-    void       DoFlush() override;
+    StatusCode DoOpen(HostBufferRef* p_pBuff)             override;
+    StatusCode DoProcess(HostBufferRef* p_pBuff)          override;
+    void       DoFlush()                                  override;
 
 private:
-    StatusCode ConvertAndEncode(const uint8_t* pcmData, int numSamples);
-    StatusCode DrainReadyPackets();
-    StatusCode DrainEncoder();
-    StatusCode SendOutputPacket(AVPacket* pkt);
+    void SendEncodedPackets();
+    void AddToRingBuffer(const float** planar, int samples);
+    bool RingBufferFull() const;
+    void GetRingBufferFrame(float** out);
+    void PadRingBuffer();
+    void ResetRingBuffer();
 
-    int sampleRate_ = 48000;
-    int bitRate_    = 320000;
-    int channels_   = 2;
+    int32_t  m_bitRate     = 320;
+    uint32_t m_bitDepth    = 16;
+    uint32_t m_sampleRate  = 48000;
+    uint32_t m_numChannels = 2;
 
-    AVCodecContext* ctx_    = nullptr;
-    SwrContext*     swrCtx_ = nullptr;
-    AVFrame*        frame_  = nullptr;
-    AVPacket*       pkt_    = nullptr;
+    std::unique_ptr<FFmpegAACContext> m_ctx;
 
-    std::vector<float> accumBuffer_;
-    int64_t ptsAccum_  = 0;
-    int     frameSize_ = 1024;
+    // Ring buffer (planar float, per channel)
+    std::vector<std::vector<float>> m_ringBuf;
+    size_t m_ringFill  = 0;
+    size_t m_frameSize = 0;
+    size_t m_channels  = 0;
 };
 
 } // namespace IOPlugin
