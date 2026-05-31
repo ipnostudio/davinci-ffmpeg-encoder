@@ -131,9 +131,13 @@ StatusCode AACEncoder::InitFFmpeg() {
         m_ctx.reset();
     }
 
-    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+   const AVCodec* codec = avcodec_find_encoder_by_name("libfdk_aac");
     if (!codec) {
-        g_Log(logLevelError, "AAC Plugin :: encoder not found");
+        g_Log(logLevelWarn, "AAC Plugin :: libfdk_aac not found, using native AAC");
+        codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+    }
+    if (!codec) {
+        g_Log(logLevelError, "AAC Plugin :: no AAC encoder found");
         return errFail;
     }
 
@@ -144,9 +148,6 @@ StatusCode AACEncoder::InitFFmpeg() {
     m_ctx->codecCtx->bit_rate    = (int64_t)m_bitRate * 1000;
     m_ctx->codecCtx->sample_fmt  = AV_SAMPLE_FMT_FLTP;
     m_ctx->codecCtx->sample_rate = (int)m_sampleRate;
-    m_ctx->codecCtx->profile     = AV_PROFILE_AAC_LOW;  // forzar AAC-LC
-    m_ctx->codecCtx->flags      |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    // NO usar strict_std_compliance experimental — causa ER Parametric
     m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_NORMAL;
 
     av_channel_layout_default(&m_ctx->codecCtx->ch_layout, (int)m_numChannels);
