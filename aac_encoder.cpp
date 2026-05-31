@@ -156,6 +156,10 @@ StatusCode AACEncoder::InitFFmpeg() {
           m_ctx->codecCtx->ch_layout.nb_channels,
           m_ctx->codecCtx->bit_rate,
           m_ctx->codecCtx->profile);
+          // Forzar escritura del AudioSpecificConfig correcto en el contenedor
+          m_ctx->codecCtx->extradata      = nullptr;
+          m_ctx->codecCtx->extradata_size = 0;
+          av_opt_set_int(m_ctx->codecCtx, "aac_coder", 2, 0); // TWOLOOP coder — más compatible
 
     if (avcodec_open2(m_ctx->codecCtx, codec, nullptr) < 0) {
         g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
