@@ -1,0 +1,51 @@
+name: Build FFmpeg Encoder Plugin (Windows)
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Download FFmpeg
+      run: |
+        curl -L "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full-shared.7z" -o ffmpeg.7z
+        7z x ffmpeg.7z
+        $dir = Get-ChildItem -Directory | Where-Object { $_.Name -like "ffmpeg-*" } | Select-Object -First 1
+        Rename-Item $dir.FullName "ffmpeg"
+      shell: pwsh
+
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G "Visual Studio 17 2022" -A x64 -DFFMPEG_DIR="${{ github.workspace }}/ffmpeg"
+      shell: pwsh
+
+    - name: Build Plugin
+      run: |
+        cd build
+        cmake --build . --config Release
+      shell: pwsh
+
+    - name: Create bundle
+      run: |
+        $bundlePath = "bundle/ffmpeg_encoder_plugin.dvcp.bundle/Contents/Win64"
+        New-Item -ItemType Directory -Force -Path $bundlePath
+
+        # Copiar el .dvcp compilado
+        Copy-Item "build/Release/ffmpeg_encoder_plugin.dvcp" $bundlePath
+
+        # Copiar las DLLs necesarias de FFmpeg
+        $ffmpegBin = "ffmpeg/bin"
+        Get-ChildItem "$ffmpegBin/avcodec-*.dll"    | Copy-Item -Destination $bundlePath
+        Get-ChildItem "$ffmpegBin/avutil-*.dll"     | Copy-Item -Destination $bundlePath
+        Get-ChildItem "$ffmpegBin/swscale-*.dll"    | Copy-Item -Destination $bundlePath
+        Get-ChildItem "$ffmpegBin/swresample-*.dll" | Copy-Item -Destination $bundlePath
+      shell: pwsh
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ffmpeg_encoder_plugin_windows
+        path: bundle/
