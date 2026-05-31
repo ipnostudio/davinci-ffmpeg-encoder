@@ -13,6 +13,7 @@
 #include "uisettings_controller.h"
 #include "x264_encoder.h"
 #include "x265_encoder.h"
+#include "aac_encoder.h"
 
 static const uint8_t UUID[] = {0xdc, 0xe2, 0xaf, 0xa7, 0x91, 0xe0, 0x75, 0xb7,
                                0x29, 0x41, 0xe8, 0xe0, 0xee, 0xa2, 0x52, 0x59};
@@ -81,8 +82,14 @@ StatusCode g_HandleCreateObj(unsigned char* p_pUUID, ObjectRef* p_ppObj) {
         *p_ppObj = new Av1NvencEncoder(formatIndex);
         return errNone;
     }
-
-    return errUnsupported;
+  
+    if (memcmp(p_pUUID, IOPlugin::AACEncoder::UUID, 16) == 0) {
+    *p_ppObj = new IOPlugin::AACEncoder();
+    return errNone;
+    
+    }
+  
+      return errUnsupported;
 }
 
 StatusCode g_HandlePluginStart() { return errNone; }
@@ -115,6 +122,9 @@ StatusCode g_ListCodecs(HostListRef* p_pList) {
     if (err != errNone) return err;
 
     err = Av1NvencEncoder::RegisterCodecs(p_pList);
+    if (err != errNone) return err;
+
+    err = IOPlugin::AACEncoder::RegisterCodec(p_pList);
     if (err != errNone) return err;
 
     return errNone;
@@ -158,6 +168,10 @@ StatusCode g_GetEncoderSettings(unsigned char* p_pUUID, HostPropertyCollectionRe
 
     if (memcmp(p_pUUID, Av1NvencEncoder::encoderInfo.UUID, 15) == 0) {
         return Av1NvencEncoder::GetEncoderSettings(p_pValues, p_pSettingsList);
+    }
+
+    if (memcmp(p_pUUID, IOPlugin::AACEncoder::UUID, 16) == 0) {
+    return IOPlugin::AACEncoder::GetEncoderSettings(p_pValues, p_pSettingsList);
     }
 
     return errNoCodec;
