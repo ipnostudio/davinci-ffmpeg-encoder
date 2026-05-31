@@ -77,6 +77,7 @@ private:
     // Helpers
     StatusCode OpenCodecContext(const AACSettings& s);
     StatusCode ConvertAndEncode(const int16_t* pcmData, int numSamples, int64_t pts);
+    StatusCode DrainReadyPackets();
     StatusCode DrainEncoder();
     StatusCode SendOutputPacket(AVPacket* pkt);
 
