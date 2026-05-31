@@ -1,27 +1,22 @@
 #include "aac_encoder.h"
 #include "plugin.h"
 #include <cstring>
-#include <vector>
 #include <algorithm>
 
 extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
+#include <libavutil/opt.h>
 }
 
 namespace IOPlugin {
 
 constexpr uint8_t AACEncoder::UUID[16];
 
-// ---------------------------------------------------------------------------
-//  Claves para guardar/leer settings directamente del SDK
-// ---------------------------------------------------------------------------
 static const char* kKeySampleRate = "aac_sr";
 static const char* kKeyBitRate    = "aac_br";
 static const char* kKeyChannels   = "aac_ch";
 
-// ---------------------------------------------------------------------------
-//  RegisterCodec
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     HostPropertyCollectionRef codecInfo;
@@ -49,7 +44,6 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     uint8_t threadSafe = 1;
     codecInfo.SetProperty(pIOPropThreadSafe, propTypeUInt8, &threadSafe, 1);
 
-    // Containers: null-separated list
     const char containers[] = "mp4\0mov\0mkv";
     codecInfo.SetProperty(pIOPropContainerList, propTypeString,
                           containers, sizeof(containers));
@@ -58,14 +52,11 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
 }
 
 // ---------------------------------------------------------------------------
-//  GetEncoderSettings  — construye la UI directamente con el SDK
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
                                            HostListRef* p_pSettingsList) {
-    // Leer valores actuales (o usar defaults)
-    int32_t curSR  = 48000;
-    int32_t curBR  = 320000;
-    int32_t curCH  = 2;
+    int32_t curSR = 48000;
+    int32_t curBR = 320000;
+    int32_t curCH = 2;
 
     if (p_pValues) {
         p_pValues->GetINT32(kKeySampleRate, curSR);
@@ -73,49 +64,37 @@ StatusCode AACEncoder::GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
         p_pValues->GetINT32(kKeyChannels,   curCH);
     }
 
-    // --- Sample Rate ---
     {
         HostUIConfigEntryRef item(kKeySampleRate);
         item.MakeRadioBox("Sample Rate",
             {"48000 Hz (Standard)", "44100 Hz (CD)"},
-            {48000, 44100},
-            curSR);
+            {48000, 44100}, curSR);
         item.SetTriggersUpdate(true);
         if (!p_pSettingsList->Append(&item)) return errFail;
     }
-
-    // --- Separador ---
     {
         HostUIConfigEntryRef sep("aac_sep1");
         sep.MakeSeparator();
         p_pSettingsList->Append(&sep);
     }
-
-    // --- Bit Rate ---
     {
         HostUIConfigEntryRef item(kKeyBitRate);
         item.MakeRadioBox("Audio Bitrate (CBR)",
             {"320 kb/s (Recommended)", "256 kb/s", "192 kb/s", "128 kb/s"},
-            {320000, 256000, 192000, 128000},
-            curBR);
+            {320000, 256000, 192000, 128000}, curBR);
         item.SetTriggersUpdate(true);
         if (!p_pSettingsList->Append(&item)) return errFail;
     }
-
-    // --- Separador ---
     {
         HostUIConfigEntryRef sep("aac_sep2");
         sep.MakeSeparator();
         p_pSettingsList->Append(&sep);
     }
-
-    // --- Channels ---
     {
         HostUIConfigEntryRef item(kKeyChannels);
         item.MakeRadioBox("Channels",
             {"Stereo (2ch)", "5.1 Surround (6ch)"},
-            {2, 6},
-            curCH);
+            {2, 6}, curCH);
         item.SetTriggersUpdate(true);
         if (!p_pSettingsList->Append(&item)) return errFail;
     }
@@ -123,28 +102,21 @@ StatusCode AACEncoder::GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
     return errNone;
 }
 
-// ---------------------------------------------------------------------------
-//  DoInit
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoInit(HostPropertyCollectionRef*) {
     return errNone;
 }
 
 // ---------------------------------------------------------------------------
-//  DoOpen
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
-    // Leer settings directamente del buffer del SDK
     p_pBuff->GetINT32(kKeySampleRate, sampleRate_);
     p_pBuff->GetINT32(kKeyBitRate,    bitRate_);
     p_pBuff->GetINT32(kKeyChannels,   channels_);
 
-    // Valores por defecto si no vienen del buffer
     if (sampleRate_ == 0) sampleRate_ = 48000;
     if (bitRate_    == 0) bitRate_    = 320000;
     if (channels_   == 0) channels_   = 2;
 
-    // Buscar encoder AAC
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
     if (!codec) return errNoCodec;
 
@@ -159,18 +131,11 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     ctx_->profile     = AV_PROFILE_AAC_LOW;
     ctx_->flags      |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-    // Channel layout
     {
-        AVChannelLayout layout;
-        if (channels_ == 6) {
-            AVChannelLayout tmp = AV_CHANNEL_LAYOUT_5POINT1;
-            av_channel_layout_copy(&layout, &tmp);
-        } else {
-            AVChannelLayout tmp = AV_CHANNEL_LAYOUT_STEREO;
-            av_channel_layout_copy(&layout, &tmp);
-        }
-        av_channel_layout_copy(&ctx_->ch_layout, &layout);
-        av_channel_layout_uninit(&layout);
+        AVChannelLayout tmp = (channels_ == 6)
+            ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1
+            : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+        av_channel_layout_copy(&ctx_->ch_layout, &tmp);
     }
 
     if (avcodec_open2(ctx_, codec, nullptr) < 0) {
@@ -180,7 +145,6 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
 
     frameSize_ = ctx_->frame_size > 0 ? ctx_->frame_size : 1024;
 
-    // AVFrame
     frame_ = av_frame_alloc();
     if (!frame_) return errAlloc;
     frame_->nb_samples  = frameSize_;
@@ -189,29 +153,20 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     av_channel_layout_copy(&frame_->ch_layout, &ctx_->ch_layout);
     if (av_frame_get_buffer(frame_, 0) < 0) return errAlloc;
 
-    // SwrContext: int16 interleaved → float planar
     {
-        AVChannelLayout srcLayout;
-        if (channels_ == 6) {
-            AVChannelLayout tmp = AV_CHANNEL_LAYOUT_5POINT1;
-            av_channel_layout_copy(&srcLayout, &tmp);
-        } else {
-            AVChannelLayout tmp = AV_CHANNEL_LAYOUT_STEREO;
-            av_channel_layout_copy(&srcLayout, &tmp);
-        }
+        AVChannelLayout srcLayout = (channels_ == 6)
+            ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1
+            : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
         swr_alloc_set_opts2(&swrCtx_,
             &ctx_->ch_layout, AV_SAMPLE_FMT_FLTP, sampleRate_,
             &srcLayout,       AV_SAMPLE_FMT_S16,  sampleRate_,
             0, nullptr);
-        av_channel_layout_uninit(&srcLayout);
     }
-
     if (!swrCtx_ || swr_init(swrCtx_) < 0) return errFail;
 
     pkt_ = av_packet_alloc();
     if (!pkt_) return errAlloc;
 
-    // Magic cookie para el contenedor MP4
     if (ctx_->extradata && ctx_->extradata_size > 0) {
         p_pBuff->SetProperty(pIOPropMagicCookie, propTypeUInt8,
                              ctx_->extradata, ctx_->extradata_size);
@@ -225,8 +180,6 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     return errNone;
 }
 
-// ---------------------------------------------------------------------------
-//  DoProcess
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoProcess(HostBufferRef* p_pBuff) {
     if (!p_pBuff || !p_pBuff->IsValid())
@@ -243,14 +196,10 @@ StatusCode AACEncoder::DoProcess(HostBufferRef* p_pBuff) {
 }
 
 // ---------------------------------------------------------------------------
-//  DoFlush
-// ---------------------------------------------------------------------------
 void AACEncoder::DoFlush() {
     DrainEncoder();
 }
 
-// ---------------------------------------------------------------------------
-//  ConvertAndEncode
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::ConvertAndEncode(const uint8_t* pcmData, int numSamples) {
     std::vector<std::vector<float>> planars(channels_, std::vector<float>(numSamples));
@@ -282,7 +231,7 @@ StatusCode AACEncoder::ConvertAndEncode(const uint8_t* pcmData, int numSamples) 
                     dst[s] = accumBuffer_[(size_t)(s * channels_ + c)];
             }
             frame_->pts = ptsAccum_;
-            ptsAccum_ += frameSize_;
+            ptsAccum_  += frameSize_;
             accumBuffer_.erase(accumBuffer_.begin(),
                                accumBuffer_.begin() + frameSize_ * channels_);
 
@@ -293,8 +242,6 @@ StatusCode AACEncoder::ConvertAndEncode(const uint8_t* pcmData, int numSamples) 
     return errMoreData;
 }
 
-// ---------------------------------------------------------------------------
-//  DrainReadyPackets
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::DrainReadyPackets() {
     while (true) {
@@ -307,8 +254,6 @@ StatusCode AACEncoder::DrainReadyPackets() {
     }
 }
 
-// ---------------------------------------------------------------------------
-//  DrainEncoder
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::DrainEncoder() {
     if (!accumBuffer_.empty()) {
@@ -339,8 +284,6 @@ StatusCode AACEncoder::DrainEncoder() {
     return errNone;
 }
 
-// ---------------------------------------------------------------------------
-//  SendOutputPacket
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::SendOutputPacket(AVPacket* pkt) {
     HostBufferRef outBuf(false);
