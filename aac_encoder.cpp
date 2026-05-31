@@ -293,7 +293,7 @@ StatusCode AACEncoder::OpenCodecContext(const AACSettings& s) {
     // ---- Force CBR via -b:a (bit_rate already set; ensure no VBR) ---
     // The built-in aac encoder defaults to ABR/CBR when bit_rate is set.
     // Optionally force with profile for compatibility:
-    ctx_->profile = FF_PROFILE_AAC_LOW;  // AAC-LC — universally supported
+    ctx_->profile = AV_PROFILE_AAC_LOW;  // AAC-LC — universally supported
 
     // ---- Open --------------------------------------------------------
     const int ret = avcodec_open2(ctx_, codec, nullptr);
