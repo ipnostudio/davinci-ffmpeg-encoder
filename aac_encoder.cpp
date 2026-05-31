@@ -1,280 +1,140 @@
-// ===========================================================================
-//  AAC Audio Encoder Plugin for DaVinci Resolve Studio
-//  aac_encoder.cpp
-//
-//  Implements AACEncoder using libavcodec's built-in "aac" encoder.
-//  Supports:
-//    • Sample rate: 44100 Hz or 48000 Hz (user-selectable)
-//    • Bitrate    : 320 kb/s CBR (fixed default; UI allows 128/192/256/320)
-//    • Channels   : Stereo (2) or 5.1 (6)
-//    • Containers : MP4, MOV, MKV
-// ===========================================================================
-
 #include "aac_encoder.h"
+#include "plugin.h"
 #include <cstring>
 #include <vector>
-#include <algorithm>
 
 extern "C" {
 #include <libavutil/channel_layout.h>
-#include <libavutil/opt.h>
 #include <libavutil/samplefmt.h>
-#include <libavcodec/avcodec.h>
-#include <libswresample/swresample.h>
 }
-
-// Suppress the stupid av_err2str macro that uses VLAs (non-standard in C++)
-#undef av_err2str
-static inline std::string av_err_to_string(int errnum) {
-    char buf[AV_ERROR_MAX_STRING_SIZE];
-    av_make_error_string(buf, AV_ERROR_MAX_STRING_SIZE, errnum);
-    return std::string(buf);
-}
-#define av_err2str(e) av_err_to_string(e).c_str()
-
-// ---------------------------------------------------------------------------
-//  DaVinci Resolve IOPlugin property IDs for AUDIO
-//  These are defined in wrapper/plugin_api.h — listed here for reference.
-//
-//  pIOPropUUID              UUID of this codec
-//  pIOPropName              Display name
-//  pIOPropGroup             Group name in codec picker
-//  pIOPropFourCC            FourCC
-//  pIOPropMediaType         mediaAudio
-//  pIOPropCodecDirection    dirEncode
-//  pIOPropSampleRate        Audio sample rate (int)
-//  pIOPropAudioChannelCount Audio channel count (int)
-//  pIOPropBitDepth          Bits per sample (16 or 32)
-//  pIOPropContainerList     Null-separated container list string
-//  pIOPropPTS               Presentation time stamp
-//  pIOPropMagicCookie       ADTS/ADIF extradata
-//  pIOPropMagicCookieType   FourCC for cookie type (esds / 'mp4a')
-// ---------------------------------------------------------------------------
 
 namespace IOPlugin {
 
-// ---------------------------------------------------------------------------
-//  UUID definition (must match declaration in header)
-// ---------------------------------------------------------------------------
 constexpr uint8_t AACEncoder::UUID[16];
 
-// ---------------------------------------------------------------------------
-//  Constructor / Destructor
-// ---------------------------------------------------------------------------
-AACEncoder::AACEncoder()  = default;
-
-AACEncoder::~AACEncoder() {
-    if (ctx_)    { avcodec_free_context(&ctx_); }
-    if (swrCtx_) { swr_free(&swrCtx_);          }
-    if (frame_)  { av_frame_free(&frame_);       }
-    if (pkt_)    { av_packet_free(&pkt_);        }
-}
-
-// ---------------------------------------------------------------------------
-//  RegisterCodec
-//  Called once during plugin startup to tell DaVinci Resolve about this codec.
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     HostPropertyCollectionRef codecInfo;
-    if (!codecInfo.IsValid()) return errAlloc;
 
-    // --- UUID ----------------------------------------------------------
     codecInfo.SetProperty(pIOPropUUID, propTypeUInt8, UUID, 16);
 
-    // --- Names ---------------------------------------------------------
-    codecInfo.SetProperty(pIOPropGroup, propTypeString,
-                          CODEC_GROUP, static_cast<int>(strlen(CODEC_GROUP)));
-    codecInfo.SetProperty(pIOPropName,  propTypeString,
-                          CODEC_NAME,  static_cast<int>(strlen(CODEC_NAME)));
+    const char* group = "AAC Audio (FFmpeg)";
+    codecInfo.SetProperty(pIOPropGroup, propTypeString, group, (int)strlen(group));
 
-    // --- FourCC --------------------------------------------------------
-    const uint32_t fourCC = FOURCC;
+    const char* name = "AAC 320kb/s (FFmpeg)";
+    codecInfo.SetProperty(pIOPropName, propTypeString, name, (int)strlen(name));
+
+    uint32_t fourCC = 'mp4a';
     codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);
 
-    // --- Media type: AUDIO ---------------------------------------------
-    constexpr uint32_t mediaTypeAudio = mediaAudio;
-    codecInfo.SetProperty(pIOPropMediaType, propTypeUInt32, &mediaTypeAudio, 1);
+    uint32_t mediaType = mediaAudio;
+    codecInfo.SetProperty(pIOPropMediaType, propTypeUInt32, &mediaType, 1);
 
-    // --- Direction: encode ---------------------------------------------
-    constexpr uint32_t dir = dirEncode;
+    uint32_t dir = dirEncode;
     codecInfo.SetProperty(pIOPropCodecDirection, propTypeUInt32, &dir, 1);
 
-    // --- Bit depth (16-bit PCM input from DR) --------------------------
-    constexpr uint32_t bitDepth = 16;
-    codecInfo.SetProperty(pIOPropBitDepth,       propTypeUInt32, &bitDepth, 1);
-    codecInfo.SetProperty(pIOPropBitsPerSample,  propTypeUInt32, &bitDepth, 1);
+    uint32_t bitDepth = 16;
+    codecInfo.SetProperty(pIOPropBitDepth, propTypeUInt32, &bitDepth, 1);
 
-    // --- Thread-safe ---------------------------------------------------
-    constexpr uint8_t threadSafe = 1;
+    uint8_t threadSafe = 1;
     codecInfo.SetProperty(pIOPropThreadSafe, propTypeUInt8, &threadSafe, 1);
-  
-    // --- Container list: mp4, mov, mkv ---------------------------------
-    const std::string containerList = std::string("mp4") + '\0' +
-                                      std::string("mov") + '\0' +
-                                      std::string("mkv");
-    codecInfo.SetProperty(pIOPropContainerList, propTypeString,
-                          containerList.c_str(),
-                          static_cast<int>(containerList.size()));
 
-    if (!p_pList->Append(&codecInfo)) return errFail;
-    return errNone;
+    // Containers: mp4 + mov (null-separated)
+    const char containers[] = "mp4\0mov\0mkv";
+    codecInfo.SetProperty(pIOPropContainerList, propTypeString, containers, sizeof(containers));
+
+    return p_pList->Append(&codecInfo) ? errNone : errFail;
 }
 
-// ---------------------------------------------------------------------------
-//  GetEncoderSettings
-//  Builds the settings panel shown in Resolve's Render page when this codec
-//  is selected.  We expose:
-//    1. Sample Rate  — Radio box: 48000 Hz (default) | 44100 Hz
-//    2. Bit Rate     — Radio box: 320 kb/s | 256 kb/s | 192 kb/s | 128 kb/s
-//    3. Channels     — Radio box: Stereo | 5.1
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
-                                          HostListRef*               p_pSettingsList) {
-    // Read current values (may be defaults on first open)
+                                           HostListRef* p_pSettingsList) {
+    UISettingsController settings(p_pValues);
+
     int32_t curSampleRate = 48000;
     int32_t curBitRate    = 320000;
     int32_t curChannels   = 2;
 
-    if (p_pValues) {
-        p_pValues->GetINT32(KEY_SAMPLE_RATE, curSampleRate);
-        p_pValues->GetINT32(KEY_BIT_RATE,    curBitRate);
-        p_pValues->GetINT32(KEY_CHANNELS,    curChannels);
-    }
+    settings.Load("aac_sr",  curSampleRate);
+    settings.Load("aac_br",  curBitRate);
+    settings.Load("aac_ch",  curChannels);
 
-    // ---- 1. Sample Rate -----------------------------------------------
+    // Sample Rate
     {
-        HostUIConfigEntryRef item(KEY_SAMPLE_RATE);
-        const std::vector<std::string> labels  = { "48000 Hz (Standard)", "44100 Hz (CD)" };
-        const std::vector<int>         values  = { 48000, 44100 };
-        item.MakeRadioBox("Sample Rate", labels, values, curSampleRate);
+        HostUIConfigEntryRef item("aac_sr");
+        item.MakeRadioBox("Sample Rate",
+            {"48000 Hz (Standard)", "44100 Hz (CD)"},
+            {48000, 44100},
+            curSampleRate);
         item.SetTriggersUpdate(true);
-        if (!item.IsSuccess() || !p_pSettingsList->Append(&item)) {
-            g_Log(logLevelError, "AAC Plugin :: Failed to render Sample Rate UI");
-            return errFail;
-        }
+        p_pSettingsList->Append(&item);
     }
 
-    // ---- Separator ----------------------------------------------------
+    // Separator
     {
-        HostUIConfigEntryRef sep("aac_sep1");
+        HostUIConfigEntryRef sep("sep1");
         sep.MakeSeparator();
-        if (!sep.IsSuccess() || !p_pSettingsList->Append(&sep)) return errFail;
+        p_pSettingsList->Append(&sep);
     }
 
-    // ---- 2. Bit Rate --------------------------------------------------
+    // Bit Rate
     {
-        HostUIConfigEntryRef item(KEY_BIT_RATE);
-        const std::vector<std::string> labels = {
-            "320 kb/s  (Recommended — Platforms)",
-            "256 kb/s",
-            "192 kb/s",
-            "128 kb/s"
-        };
-        const std::vector<int> values = { 320000, 256000, 192000, 128000 };
-        item.MakeRadioBox("Audio Bitrate (CBR)", labels, values, curBitRate);
+        HostUIConfigEntryRef item("aac_br");
+        item.MakeRadioBox("Audio Bitrate (CBR)",
+            {"320 kb/s (Recommended)", "256 kb/s", "192 kb/s", "128 kb/s"},
+            {320000, 256000, 192000, 128000},
+            curBitRate);
         item.SetTriggersUpdate(true);
-        if (!item.IsSuccess() || !p_pSettingsList->Append(&item)) {
-            g_Log(logLevelError, "AAC Plugin :: Failed to render Bit Rate UI");
-            return errFail;
-        }
+        p_pSettingsList->Append(&item);
     }
 
-    // ---- Separator ----------------------------------------------------
+    // Separator
     {
-        HostUIConfigEntryRef sep("aac_sep2");
+        HostUIConfigEntryRef sep("sep2");
         sep.MakeSeparator();
-        if (!sep.IsSuccess() || !p_pSettingsList->Append(&sep)) return errFail;
+        p_pSettingsList->Append(&sep);
     }
 
-    // ---- 3. Channels --------------------------------------------------
+    // Channels
     {
-        HostUIConfigEntryRef item(KEY_CHANNELS);
-        const std::vector<std::string> labels = { "Stereo (2ch)", "5.1 Surround (6ch)" };
-        const std::vector<int>         values = { 2, 6 };
-        item.MakeRadioBox("Channels", labels, values, curChannels);
+        HostUIConfigEntryRef item("aac_ch");
+        item.MakeRadioBox("Channels",
+            {"Stereo (2ch)", "5.1 Surround (6ch)"},
+            {2, 6},
+            curChannels);
         item.SetTriggersUpdate(true);
-        if (!item.IsSuccess() || !p_pSettingsList->Append(&item)) {
-            g_Log(logLevelError, "AAC Plugin :: Failed to render Channels UI");
-            return errFail;
-        }
+        p_pSettingsList->Append(&item);
     }
 
     return errNone;
 }
 
-// ---------------------------------------------------------------------------
-//  DoInit  — called right after object construction
-// ---------------------------------------------------------------------------
-StatusCode AACEncoder::DoInit(HostPropertyCollectionRef* /*p_pProps*/) {
+StatusCode AACEncoder::DoInit(HostPropertyCollectionRef*) {
     return errNone;
 }
 
-// ---------------------------------------------------------------------------
-//  DoOpen  — called when a render job starts; configure the codec here
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
-    // Load user settings from the buffer
-    {
-        int32_t v = 0;
-        if (p_pBuff->GetINT32(KEY_SAMPLE_RATE, v)) settings_.sampleRate = v;
-        if (p_pBuff->GetINT32(KEY_BIT_RATE,    v)) settings_.bitRate    = v;
-        if (p_pBuff->GetINT32(KEY_CHANNELS,    v)) settings_.channels   = v;
-    }
+    // Read settings
+    UISettingsController settings(p_pBuff);
+    settings.Load("aac_sr", sampleRate_);
+    settings.Load("aac_br", bitRate_);
+    settings.Load("aac_ch", channels_);
 
-    g_Log(logLevelInfo,
-          "AAC Plugin :: Opening encoder — SR=%d Hz, Bitrate=%d bps, Ch=%d",
-          settings_.sampleRate, settings_.bitRate, settings_.channels);
-
-    // We do NOT support multi-pass for audio
-    constexpr uint8_t isMultiPass = 0;
-    p_pBuff->SetProperty(pIOPropMultiPass, propTypeUInt8, &isMultiPass, 1);
-
-    // Open FFmpeg AAC codec context
-    const StatusCode err = OpenCodecContext(settings_);
-    if (err != errNone) return err;
-
-    // Allocate packet
-    pkt_ = av_packet_alloc();
-    if (!pkt_) return errAlloc;
-
-    // Pass the ADTS/ADIF extradata (Magic Cookie) back to Resolve
-    // so it can embed it in the container (esds box for MP4)
-    if (ctx_->extradata && ctx_->extradata_size > 0) {
-        p_pBuff->SetProperty(pIOPropMagicCookie, propTypeUInt8,
-                             ctx_->extradata, ctx_->extradata_size);
-    }
-    const uint32_t cookieType = 'mp4a';
-    p_pBuff->SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1);
-
-    return errNone;
-}
-
-// ---------------------------------------------------------------------------
-//  OpenCodecContext  — initialise libavcodec AAC encoder
-// ---------------------------------------------------------------------------
-StatusCode AACEncoder::OpenCodecContext(const AACSettings& s) {
+    // Find AAC encoder
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (!codec) {
-        g_Log(logLevelError, "AAC Plugin :: libavcodec AAC encoder not found");
-        return errNoCodec;
-    }
+    if (!codec) return errNoCodec;
 
     ctx_ = avcodec_alloc_context3(codec);
-    if (!ctx_) {
-        g_Log(logLevelError, "AAC Plugin :: Failed to allocate codec context");
-        return errAlloc;
-    }
+    if (!ctx_) return errAlloc;
 
-    // ---- Codec parameters ----------------------------------------
-    ctx_->codec_id        = AV_CODEC_ID_AAC;
-    ctx_->codec_type      = AVMEDIA_TYPE_AUDIO;
-    ctx_->sample_rate     = s.sampleRate;
-    ctx_->bit_rate        = s.bitRate;
-    ctx_->sample_fmt      = AV_SAMPLE_FMT_FLTP;   // libavcodec aac expects float planar
-    ctx_->flags          |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    ctx_->codec_id    = AV_CODEC_ID_AAC;
+    ctx_->codec_type  = AVMEDIA_TYPE_AUDIO;
+    ctx_->sample_rate = sampleRate_;
+    ctx_->bit_rate    = bitRate_;
+    ctx_->sample_fmt  = AV_SAMPLE_FMT_FLTP;
+    ctx_->profile     = AV_PROFILE_AAC_LOW;
+    ctx_->flags      |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-    // Channel layout (FFmpeg 6+ API)
-    if (s.channels == 6) {
+    // Channel layout
+    if (channels_ == 6) {
         AVChannelLayout layout = AV_CHANNEL_LAYOUT_5POINT1;
         av_channel_layout_copy(&ctx_->ch_layout, &layout);
     } else {
@@ -282,288 +142,168 @@ StatusCode AACEncoder::OpenCodecContext(const AACSettings& s) {
         av_channel_layout_copy(&ctx_->ch_layout, &layout);
     }
 
-    // ---- Force CBR via -b:a (bit_rate already set; ensure no VBR) ---
-    // The built-in aac encoder defaults to ABR/CBR when bit_rate is set.
-    // Optionally force with profile for compatibility:
-    ctx_->profile = AV_PROFILE_AAC_LOW;  // AAC-LC — universally supported
-
-    // ---- Open --------------------------------------------------------
-    const int ret = avcodec_open2(ctx_, codec, nullptr);
-    if (ret < 0) {
-        g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed: %s", av_err2str(ret));
+    if (avcodec_open2(ctx_, codec, nullptr) < 0) {
         avcodec_free_context(&ctx_);
-        ctx_ = nullptr;
         return errFail;
     }
 
-    frameSize_ = ctx_->frame_size;   // typically 1024 for AAC-LC
-    if (frameSize_ <= 0) frameSize_ = 1024;
+    frameSize_ = ctx_->frame_size > 0 ? ctx_->frame_size : 1024;
 
-    // ---- Allocate reusable AVFrame ----------------------------------
+    // AVFrame
     frame_ = av_frame_alloc();
     if (!frame_) return errAlloc;
-
-    frame_->nb_samples     = frameSize_;
-    frame_->format         = AV_SAMPLE_FMT_FLTP;
-    frame_->sample_rate    = s.sampleRate;
+    frame_->nb_samples  = frameSize_;
+    frame_->format      = AV_SAMPLE_FMT_FLTP;
+    frame_->sample_rate = sampleRate_;
     av_channel_layout_copy(&frame_->ch_layout, &ctx_->ch_layout);
+    if (av_frame_get_buffer(frame_, 0) < 0) return errAlloc;
 
-    if (av_frame_get_buffer(frame_, 0) < 0) {
-        g_Log(logLevelError, "AAC Plugin :: Failed to allocate frame buffer");
-        return errAlloc;
+    // SwrContext: int16 interleaved → float planar
+    AVChannelLayout srcLayout = (channels_ == 6)
+        ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1
+        : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+
+    AVChannelLayout tmpSrc;
+    av_channel_layout_copy(&tmpSrc, &srcLayout);
+
+    swr_alloc_set_opts2(&swrCtx_,
+        &ctx_->ch_layout, AV_SAMPLE_FMT_FLTP, sampleRate_,
+        &tmpSrc,          AV_SAMPLE_FMT_S16,  sampleRate_,
+        0, nullptr);
+
+    if (!swrCtx_ || swr_init(swrCtx_) < 0) return errFail;
+
+    pkt_ = av_packet_alloc();
+    if (!pkt_) return errAlloc;
+
+    // Send magic cookie (ADTS extradata) to Resolve
+    if (ctx_->extradata && ctx_->extradata_size > 0) {
+        p_pBuff->SetProperty(pIOPropMagicCookie, propTypeUInt8,
+                             ctx_->extradata, ctx_->extradata_size);
+        uint32_t cookieType = 'mp4a';
+        p_pBuff->SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1);
     }
 
-    // ---- SwrContext: DR sends int16_t interleaved → float planar ----
-    AVChannelLayout srcLayout;
-    if (s.channels == 6) {
-        AVChannelLayout tmp = AV_CHANNEL_LAYOUT_5POINT1;
-        av_channel_layout_copy(&srcLayout, &tmp);
-    } else {
-        AVChannelLayout tmp = AV_CHANNEL_LAYOUT_STEREO;
-        av_channel_layout_copy(&srcLayout, &tmp);
-    }
-
-    int swrRet = swr_alloc_set_opts2(
-        &swrCtx_,
-        &ctx_->ch_layout,    // out layout
-        AV_SAMPLE_FMT_FLTP,  // out format
-        s.sampleRate,        // out sample rate
-        &srcLayout,          // in layout
-        AV_SAMPLE_FMT_S16,   // in format (16-bit signed interleaved from DR)
-        s.sampleRate,        // in sample rate (same — no resampling needed)
-        0, nullptr
-    );
-    if (swrRet < 0 || !swrCtx_) {
-        g_Log(logLevelError, "AAC Plugin :: swr_alloc_set_opts2 failed");
-        return errFail;
-    }
-
-    swrRet = swr_init(swrCtx_);
-    if (swrRet < 0) {
-        g_Log(logLevelError, "AAC Plugin :: swr_init failed: %s", av_err2str(swrRet));
-        return errFail;
-    }
-
-    // Pre-size the accumulation buffer
-    accumBuffer_.reserve(static_cast<size_t>(frameSize_) * s.channels * 4);
-
-    g_Log(logLevelInfo,
-          "AAC Plugin :: Codec ready — frame_size=%d, SR=%d, ch=%d, br=%d bps",
-          frameSize_, s.sampleRate, s.channels, s.bitRate);
+    uint8_t noMultiPass = 0;
+    p_pBuff->SetProperty(pIOPropMultiPass, propTypeUInt8, &noMultiPass, 1);
 
     return errNone;
 }
 
-// ---------------------------------------------------------------------------
-//  DoProcess  — called for each audio buffer delivered by DaVinci Resolve
-//  p_pBuff == nullptr means flush (end of stream)
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoProcess(HostBufferRef* p_pBuff) {
-    if (p_pBuff == nullptr || !p_pBuff->IsValid()) {
+    if (!p_pBuff || !p_pBuff->IsValid())
         return DrainEncoder();
-    }
 
-    char*  pBuf   = nullptr;
+    char* buf = nullptr;
     size_t bufSize = 0;
-
-    if (!p_pBuff->LockBuffer(&pBuf, &bufSize)) {
-        g_Log(logLevelError, "AAC Plugin :: Failed to lock audio buffer");
+    if (!p_pBuff->LockBuffer(&buf, &bufSize))
         return errFail;
-    }
 
-    if (!pBuf || bufSize == 0) {
-        p_pBuff->UnlockBuffer();
-        return errUnsupported;
-    }
-
-    // PTS from Resolve
-    int64_t pts = 0;
-    p_pBuff->GetINT64(pIOPropPTS, pts);
-
-    // Resolve delivers int16_t interleaved PCM
-    const int16_t* pcm = reinterpret_cast<const int16_t*>(pBuf);
-    const int numSamples = static_cast<int>(bufSize / (sizeof(int16_t) * settings_.channels));
-
-    const StatusCode err = ConvertAndEncode(pcm, numSamples, pts);
-
+    // Resolve sends int16 interleaved
+    const int numSamples = (int)(bufSize / (sizeof(int16_t) * channels_));
+    StatusCode err = ConvertAndEncode(reinterpret_cast<const uint8_t*>(buf), numSamples, channels_);
     p_pBuff->UnlockBuffer();
     return err;
 }
 
-// ---------------------------------------------------------------------------
-//  ConvertAndEncode
-//  Converts int16 interleaved → float planar, accumulates into frameSize_-
-//  aligned chunks, and sends each chunk to the encoder.
-// ---------------------------------------------------------------------------
-StatusCode AACEncoder::ConvertAndEncode(const int16_t* pcmData,
-                                        int            numSamples,
-                                        int64_t        pts) {
-    // We need float planar intermediate. Convert the whole input block first.
-    // Temporary float buffers (per channel, planar)
-    const int ch = settings_.channels;
-    std::vector<std::vector<float>> planars(ch, std::vector<float>(numSamples));
-    std::vector<uint8_t*>           planarPtrs(ch);
-    for (int i = 0; i < ch; ++i)
+void AACEncoder::DoFlush() {
+    DrainEncoder();
+}
+
+StatusCode AACEncoder::ConvertAndEncode(const uint8_t* pcmData, int numSamples, int numChannels) {
+    // Convert int16 interleaved → float planar via swr
+    std::vector<std::vector<float>> planars(numChannels, std::vector<float>(numSamples));
+    std::vector<uint8_t*> planarPtrs(numChannels);
+    for (int i = 0; i < numChannels; ++i)
         planarPtrs[i] = reinterpret_cast<uint8_t*>(planars[i].data());
 
-    const uint8_t* inData[1] = { reinterpret_cast<const uint8_t*>(pcmData) };
+    const uint8_t* inPtr[1] = { pcmData };
+    int converted = swr_convert(swrCtx_, planarPtrs.data(), numSamples, inPtr, numSamples);
+    if (converted < 0) return errFail;
 
-    const int converted = swr_convert(
-        swrCtx_,
-        planarPtrs.data(), numSamples,
-        inData,            numSamples
-    );
+    // Accumulate and encode in frameSize_ chunks
+    int done = 0;
+    while (done < converted) {
+        int inAccum  = (int)(accumBuffer_.size() / numChannels);
+        int canFill  = frameSize_ - inAccum;
+        int toCopy   = std::min(converted - done, canFill);
 
-    if (converted < 0) {
-        g_Log(logLevelError, "AAC Plugin :: swr_convert failed: %s", av_err2str(converted));
-        return errFail;
-    }
-
-    // Interleave into our accumulation buffer (just for bookkeeping)
-    // Actually we process frame by frame directly:
-
-    int processed = 0;
-    while (processed < converted) {
-        const int avail   = converted - processed;
-        const int canFill = frameSize_ - static_cast<int>(accumBuffer_.size() / ch);
-        const int toCopy  = std::min(avail, canFill);
-
-        // Append to accumBuffer_ in interleaved-float form
-        for (int s = processed; s < processed + toCopy; ++s) {
-            for (int c = 0; c < ch; ++c) {
+        for (int s = done; s < done + toCopy; ++s)
+            for (int c = 0; c < numChannels; ++c)
                 accumBuffer_.push_back(planars[c][s]);
-            }
-        }
-        processed += toCopy;
+        done += toCopy;
 
-        // Once we have a full frame, encode it
-        const int accumulated = static_cast<int>(accumBuffer_.size()) / ch;
-        if (accumulated >= frameSize_) {
-            // Fill AVFrame
+        if ((int)(accumBuffer_.size() / numChannels) >= frameSize_) {
             if (av_frame_make_writable(frame_) < 0) return errFail;
 
-            for (int c = 0; c < ch; ++c) {
+            for (int c = 0; c < numChannels; ++c) {
                 float* dst = reinterpret_cast<float*>(frame_->data[c]);
-                for (int s = 0; s < frameSize_; ++s) {
-                    dst[s] = accumBuffer_[static_cast<size_t>(s * ch + c)];
-                }
+                for (int s = 0; s < frameSize_; ++s)
+                    dst[s] = accumBuffer_[(size_t)(s * numChannels + c)];
             }
-
             frame_->pts = ptsAccum_;
             ptsAccum_ += frameSize_;
-
-            // Remove consumed samples
             accumBuffer_.erase(accumBuffer_.begin(),
-                               accumBuffer_.begin() + frameSize_ * ch);
+                               accumBuffer_.begin() + frameSize_ * numChannels);
 
-            // Send to encoder
-            const int ret = avcodec_send_frame(ctx_, frame_);
-            if (ret < 0 && ret != AVERROR(EAGAIN)) {
-                g_Log(logLevelError, "AAC Plugin :: avcodec_send_frame: %s", av_err2str(ret));
-                return errFail;
-            }
-
-            // Drain ready packets
-            StatusCode drainErr = DrainReadyPackets();
-            if (drainErr != errNone && drainErr != errMoreData)
-                return drainErr;
+            if (avcodec_send_frame(ctx_, frame_) < 0) return errFail;
+            DrainReadyPackets();
         }
     }
-
-    (void)pts;  // pts from DR is used implicitly through ptsAccum_
     return errMoreData;
 }
 
-// ---------------------------------------------------------------------------
-//  DrainReadyPackets  — pull all currently available output packets
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::DrainReadyPackets() {
     while (true) {
-        const int ret = avcodec_receive_packet(ctx_, pkt_);
-        if (ret == AVERROR(EAGAIN))  return errMoreData;
-        if (ret == AVERROR_EOF)     { av_packet_unref(pkt_); return errNone; }
-        if (ret < 0) {
-            g_Log(logLevelError, "AAC Plugin :: avcodec_receive_packet: %s", av_err2str(ret));
-            av_packet_unref(pkt_);
-            return errFail;
-        }
-        const StatusCode err = SendOutputPacket(pkt_);
+        int ret = avcodec_receive_packet(ctx_, pkt_);
+        if (ret == AVERROR(EAGAIN)) return errMoreData;
+        if (ret == AVERROR_EOF)   { av_packet_unref(pkt_); return errNone; }
+        if (ret < 0)              { av_packet_unref(pkt_); return errFail; }
+        SendOutputPacket(pkt_);
         av_packet_unref(pkt_);
-        if (err != errNone) return err;
     }
 }
 
-// ---------------------------------------------------------------------------
-//  DrainEncoder  — flush at end of stream
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::DrainEncoder() {
-    // Flush any partial frame with silence padding
+    // Pad and send remaining samples
     if (!accumBuffer_.empty()) {
-        const int ch  = settings_.channels;
-        const int got = static_cast<int>(accumBuffer_.size()) / ch;
-
-        if (av_frame_make_writable(frame_) < 0) return errFail;
-
-        for (int c = 0; c < ch; ++c) {
-            float* dst = reinterpret_cast<float*>(frame_->data[c]);
-            for (int s = 0; s < frameSize_; ++s) {
-                dst[s] = (s < got) ? accumBuffer_[static_cast<size_t>(s * ch + c)] : 0.0f;
+        int inAccum = (int)(accumBuffer_.size() / channels_);
+        if (av_frame_make_writable(frame_) >= 0) {
+            for (int c = 0; c < channels_; ++c) {
+                float* dst = reinterpret_cast<float*>(frame_->data[c]);
+                for (int s = 0; s < frameSize_; ++s)
+                    dst[s] = (s < inAccum) ? accumBuffer_[(size_t)(s * channels_ + c)] : 0.0f;
             }
+            frame_->pts = ptsAccum_;
+            ptsAccum_ += frameSize_;
+            accumBuffer_.clear();
+            avcodec_send_frame(ctx_, frame_);
+            DrainReadyPackets();
         }
-        frame_->pts = ptsAccum_;
-        ptsAccum_ += frameSize_;
-        accumBuffer_.clear();
-
-        avcodec_send_frame(ctx_, frame_);
-        DrainReadyPackets();
     }
-
-    // Signal EOF to encoder
     avcodec_send_frame(ctx_, nullptr);
-
-    // Collect all remaining packets
     while (true) {
-        const int ret = avcodec_receive_packet(ctx_, pkt_);
+        int ret = avcodec_receive_packet(ctx_, pkt_);
         if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) { av_packet_unref(pkt_); break; }
         if (ret < 0) { av_packet_unref(pkt_); break; }
         SendOutputPacket(pkt_);
         av_packet_unref(pkt_);
     }
-
     return errNone;
 }
 
-// ---------------------------------------------------------------------------
-//  DoFlush — Resolve calls this at end-of-stream
-// ---------------------------------------------------------------------------
-void AACEncoder::DoFlush() {
-    DrainEncoder();
-}
-
-// ---------------------------------------------------------------------------
-//  SendOutputPacket — wraps encoded data in a Resolve HostBufferRef and
-//  sends it upstream via the callback
-// ---------------------------------------------------------------------------
 StatusCode AACEncoder::SendOutputPacket(AVPacket* pkt) {
     HostBufferRef outBuf(false);
-    if (!outBuf.IsValid() || !outBuf.Resize(pkt->size)) {
-        g_Log(logLevelError, "AAC Plugin :: Failed to allocate output buffer");
-        return errAlloc;
-    }
+    if (!outBuf.IsValid() || !outBuf.Resize(pkt->size)) return errAlloc;
 
-    char*  outPtr  = nullptr;
+    char* outPtr = nullptr;
     size_t outSize = 0;
-    if (!outBuf.LockBuffer(&outPtr, &outSize)) {
-        g_Log(logLevelError, "AAC Plugin :: Failed to lock output buffer");
-        return errAlloc;
-    }
-
+    if (!outBuf.LockBuffer(&outPtr, &outSize)) return errAlloc;
     memcpy(outPtr, pkt->data, pkt->size);
 
-    outBuf.SetProperty(pIOPropPTS,        propTypeInt64, &pkt->pts, 1);
-    outBuf.SetProperty(pIOPropDTS,        propTypeInt64, &pkt->dts, 1);
-
-    constexpr uint8_t isKey = 1;          // all audio frames are key frames
+    outBuf.SetProperty(pIOPropPTS, propTypeInt64, &pkt->pts, 1);
+    outBuf.SetProperty(pIOPropDTS, propTypeInt64, &pkt->dts, 1);
+    uint8_t isKey = 1;
     outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8, &isKey, 1);
 
     m_pCallback->SendOutput(&outBuf);
