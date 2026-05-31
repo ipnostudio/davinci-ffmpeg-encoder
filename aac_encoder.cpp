@@ -107,17 +107,7 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     // --- Thread-safe ---------------------------------------------------
     constexpr uint8_t threadSafe = 1;
     codecInfo.SetProperty(pIOPropThreadSafe, propTypeUInt8, &threadSafe, 1);
-
-    // --- Supported sample rates (44100 and 48000) ----------------------
-    constexpr uint32_t sampleRates[] = { 44100, 48000 };
-    codecInfo.SetProperty(pIOPropSupportedSampleRates, propTypeUInt32,
-                          sampleRates, 2);
-
-    // --- Supported channel counts (stereo=2, 5.1=6) --------------------
-    constexpr uint32_t channels[] = { 2, 6 };
-    codecInfo.SetProperty(pIOPropSupportedChannelCounts, propTypeUInt32,
-                          channels, 2);
-
+  
     // --- Container list: mp4, mov, mkv ---------------------------------
     const std::string containerList = std::string("mp4") + '\0' +
                                       std::string("mov") + '\0' +
