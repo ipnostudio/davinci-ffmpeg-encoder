@@ -1,6 +1,7 @@
 #pragma once
 
-#include "uisettings_controller.h"
+#include "wrapper/plugin_api.h"
+#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
