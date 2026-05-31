@@ -132,10 +132,16 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     ctx_->flags      |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
     {
-        AVChannelLayout tmp = (channels_ == 6)
-            ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1
-            : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+        AVChannelLayout tmp;
+        if (channels_ == 6) {
+            AVChannelLayout t = AV_CHANNEL_LAYOUT_5POINT1;
+            av_channel_layout_copy(&tmp, &t);
+        } else {
+            AVChannelLayout t = AV_CHANNEL_LAYOUT_STEREO;
+            av_channel_layout_copy(&tmp, &t);
+        }
         av_channel_layout_copy(&ctx_->ch_layout, &tmp);
+        av_channel_layout_uninit(&tmp);
     }
 
     if (avcodec_open2(ctx_, codec, nullptr) < 0) {
@@ -153,14 +159,20 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     av_channel_layout_copy(&frame_->ch_layout, &ctx_->ch_layout);
     if (av_frame_get_buffer(frame_, 0) < 0) return errAlloc;
 
-    {
-        AVChannelLayout srcLayout = (channels_ == 6)
-            ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1
-            : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+     {
+        AVChannelLayout srcLayout;
+        if (channels_ == 6) {
+            AVChannelLayout t = AV_CHANNEL_LAYOUT_5POINT1;
+            av_channel_layout_copy(&srcLayout, &t);
+        } else {
+            AVChannelLayout t = AV_CHANNEL_LAYOUT_STEREO;
+            av_channel_layout_copy(&srcLayout, &t);
+        }
         swr_alloc_set_opts2(&swrCtx_,
             &ctx_->ch_layout, AV_SAMPLE_FMT_FLTP, sampleRate_,
             &srcLayout,       AV_SAMPLE_FMT_S16,  sampleRate_,
             0, nullptr);
+        av_channel_layout_uninit(&srcLayout);
     }
     if (!swrCtx_ || swr_init(swrCtx_) < 0) return errFail;
 
