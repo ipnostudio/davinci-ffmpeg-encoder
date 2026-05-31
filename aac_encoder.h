@@ -37,6 +37,7 @@ protected:
     void       DoFlush()                                  override;
 
 private:
+    StatusCode InitFFmpeg();
     void SendEncodedPackets();
     void AddToRingBuffer(const float** planar, int samples);
     bool RingBufferFull() const;
