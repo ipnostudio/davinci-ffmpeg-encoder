@@ -16,6 +16,7 @@ find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h HINTS "${FFMPEG_DIR}/include")
 find_library(AVCODEC_LIBRARY avcodec HINTS "${FFMPEG_DIR}/lib")
 find_library(AVUTIL_LIBRARY avutil HINTS "${FFMPEG_DIR}/lib")
 find_library(SWSCALE_LIBRARY swscale HINTS "${FFMPEG_DIR}/lib")
+find_library(SWRESAMPLE_LIBRARY swresample HINTS "${FFMPEG_DIR}/lib")
 
 get_filename_component(AVCODEC_EXT "${AVCODEC_LIBRARY}" EXT)
 if (AVCODEC_EXT STREQUAL ".a")
@@ -29,6 +30,7 @@ endif ()
 include_directories(include wrapper ${FFMPEG_INCLUDE_DIR})
 
 set(SRCS
+        aac_encoder.cpp
         av1_encoder.cpp
         av1_nvenc_encoder.cpp
         ffmpeg_encoder.cpp
@@ -40,11 +42,11 @@ set(SRCS
         svt_av1_encoder.cpp
         uisettings_controller.cpp
         x264_encoder.cpp
-        x265_encoder.cpp
-        aac_encoder.cpp
+        x265_encoder.cpp        
 )
 
 set(HEADERS
+        aac_encoder.h
         av1_encoder.h
         av1_nvenc_encoder.h
         ffmpeg_encoder.h
@@ -74,7 +76,7 @@ else ()
     target_link_options(${PROJECT_NAME} PRIVATE -dynamiclib)
 endif ()
 
-target_link_libraries(${PROJECT_NAME} PRIVATE host_plugin ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+target_link_libraries(${PROJECT_NAME} PRIVATE host_plugin ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY} ${SWRESAMPLE_LIBRARY})
 
 if (FFMPEG_IS_STATIC)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${X264_LIBRARY} ${X265_LIBRARY} ${SVTAV1_LIBRARY} numa va va-drm va-x11 X11)
