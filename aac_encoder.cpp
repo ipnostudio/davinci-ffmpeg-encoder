@@ -79,13 +79,19 @@ StatusCode AACEncoder::GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
 // DoInit — aquí se inicializa FFmpeg (igual que el plugin de Toxblh)
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoInit(HostPropertyCollectionRef* p_pProps) {
-    p_pProps->GetUINT32(pIOPropBitDepth,    m_bitDepth);
-    p_pProps->GetUINT32(pIOPropSamplingRate, m_sampleRate);
-    p_pProps->GetUINT32(pIOPropNumChannels,  m_numChannels);
+    // Los parámetros reales vienen de DoOpen — aquí solo leemos como fallback
+    uint32_t sr = 0, ch = 0, bd = 0;
+    p_pProps->GetUINT32(pIOPropSamplingRate, sr);
+    p_pProps->GetUINT32(pIOPropNumChannels,  ch);
+    p_pProps->GetUINT32(pIOPropBitDepth,     bd);
 
-    if (m_bitDepth == 0)    m_bitDepth    = 16;
-    if (m_sampleRate == 0)  m_sampleRate  = 48000;
+    if (sr > 0) m_sampleRate  = sr;
+    if (ch > 0) m_numChannels = ch;
+    if (bd > 0) m_bitDepth    = bd;
+
+    if (m_sampleRate  == 0) m_sampleRate  = 48000;
     if (m_numChannels == 0) m_numChannels = 2;
+    if (m_bitDepth    == 0) m_bitDepth    = 16;
 
     // Bitrate desde settings (viene de DoOpen, default aquí)
     int bitRateBps = m_bitRate * 1000;  // m_bitRate en kbps
@@ -103,6 +109,7 @@ StatusCode AACEncoder::DoInit(HostPropertyCollectionRef* p_pProps) {
     m_ctx->codecCtx->bit_rate    = bitRateBps;
     m_ctx->codecCtx->sample_fmt  = AV_SAMPLE_FMT_FLTP;
     m_ctx->codecCtx->sample_rate = (int)m_sampleRate;
+    m_ctx->codecCtx->profile = AV_PROFILE_AAC_LOW;  // Forzar AAC-LC estándar
     m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
 
     av_channel_layout_default(&m_ctx->codecCtx->ch_layout, (int)m_numChannels);
@@ -143,17 +150,39 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     p_pBuff->GetINT32("aac_br", m_bitRate);
     if (m_bitRate <= 0) m_bitRate = 320;
 
-    // Informar el bitrate a Resolve
+    // Leer parámetros reales del proyecto aquí — en DoInit aún no están disponibles
+    p_pBuff->GetUINT32(pIOPropSamplingRate, m_sampleRate);
+    p_pBuff->GetUINT32(pIOPropNumChannels,  m_numChannels);
+    p_pBuff->GetUINT32(pIOPropBitDepth,     m_bitDepth);
+
+    if (m_sampleRate  == 0) m_sampleRate  = 48000;
+    if (m_numChannels == 0) m_numChannels = 2;
+    if (m_bitDepth    == 0) m_bitDepth    = 16;
+
     uint64_t br = (uint64_t)m_bitRate * 1000;
     p_pBuff->SetProperty(pIOPropBitRate, propTypeUInt32, &br, 1);
 
+    g_Log(logLevelWarn, "AAC Plugin :: DoOpen — SR=%u CH=%u BD=%u BR=%d",
+          m_sampleRate, m_numChannels, m_bitDepth, m_bitRate);
+
     return errNone;
 }
-
 // ---------------------------------------------------------------------------
 // DoProcess — recibe PCM de Resolve, acumula y codifica
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::DoProcess(HostBufferRef* p_pBuff) {
+    if (m_ctx && m_ctx->codecCtx &&
+        m_ctx->codecCtx->sample_rate != (int)m_sampleRate) {
+        g_Log(logLevelWarn, "AAC Plugin :: Sample rate mismatch (%d vs %u), reinitializing",
+              m_ctx->codecCtx->sample_rate, m_sampleRate);
+        if (m_ctx->frame)    av_frame_free(&m_ctx->frame);
+        if (m_ctx->pkt)      av_packet_free(&m_ctx->pkt);
+        if (m_ctx->codecCtx) avcodec_free_context(&m_ctx->codecCtx);
+        m_ctx.reset();
+        // Re-run init logic
+        HostPropertyCollectionRef dummy;
+        DoInit(&dummy);
+    }
     if (!m_ctx || !m_ctx->codecCtx) return errFail;
 
     if (p_pBuff == nullptr) {
