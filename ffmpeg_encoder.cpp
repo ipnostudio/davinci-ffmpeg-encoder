@@ -259,6 +259,8 @@ StatusCode FFmpegEncoder::DoOpen(HostBufferRef* p_pBuff) {
 }
 
 StatusCode FFmpegEncoder::ApplyOptions(AVCodecContext* ctx, UISettingsController& settings, HostBufferRef* p_pBuff) {
+
+    // --- Quality mode ---
     switch (settings.GetQualityMode()) {
         case CQP:
             if (useVaapi) {
@@ -275,20 +277,20 @@ StatusCode FFmpegEncoder::ApplyOptions(AVCodecContext* ctx, UISettingsController
             ctx->bit_rate = settings.GetBitRate();
             break;
         case CBR:
-            ctx->bit_rate     = settings.GetBitRate();
-            ctx->rc_min_rate  = settings.GetBitRate();
-            ctx->rc_max_rate  = settings.GetBitRate();
+            ctx->bit_rate       = settings.GetBitRate();
+            ctx->rc_min_rate    = settings.GetBitRate();
+            ctx->rc_max_rate    = settings.GetBitRate();
             ctx->rc_buffer_size = settings.GetBitRate() * 2;
             if (encoderInfo.hwAcceleration == Nvenc) {
-                // NVENC tiene modo CBR nativo — más preciso que rc_min/max
-                av_opt_set(ctx->priv_data, "rc", "cbr", 0);
+                av_opt_set(ctx->priv_data, "rc",  "cbr",  0);
+                av_opt_set(ctx->priv_data, "cbr", "true", 0);
             } else {
-                // x264 CBR via VBV + nal-hrd
                 av_opt_set(ctx->priv_data, "nal-hrd", "cbr", 0);
             }
             break;
     }
 
+    // --- Preset ---
     if (useVaapi) {
         constexpr int preEncode = 1 << 3;
         constexpr int VBAQ = 1 << 4;
@@ -299,6 +301,37 @@ StatusCode FFmpegEncoder::ApplyOptions(AVCodecContext* ctx, UISettingsController
         }
     }
 
+    // --- Perfil (solo H.264/H.265, no AV1 ni VAAPI) ---
+    if (!useVaapi && settings.GetProfile() != -1) {
+        ctx->profile = settings.GetProfile();
+    }
+
+    // --- Nivel ---
+    // FFmpeg usa el nivel x10: nivel 4.1 = 41, 5.2 = 52
+    if (!useVaapi && settings.GetLevel() != -1) {
+        ctx->level = settings.GetLevel();
+    }
+
+    // --- GOP (Keyframe Interval) en fotogramas ---
+    if (settings.GetGOP() > 0) {
+        ctx->gop_size = settings.GetGOP();
+        // B-frames: 2 consecutivos (estándar para plataformas)
+        if (!useVaapi && encoderInfo.hwAcceleration != Nvenc) {
+            // x264: forzar GOP cerrado + CABAC en CBR
+            if (settings.GetQualityMode() == CBR) {
+                ctx->max_b_frames = 2;
+                av_opt_set_int(ctx->priv_data, "bf", 2, 0);
+                // GOP cerrado: no referencias cruzadas entre GOPs
+                av_opt_set_int(ctx->priv_data, "flags", ctx->flags | AV_CODEC_FLAG_CLOSED_GOP, 0);
+            }
+        } else if (encoderInfo.hwAcceleration == Nvenc) {
+            if (settings.GetQualityMode() == CBR) {
+                ctx->max_b_frames = 2;
+            }
+        }
+    }
+
+    // --- Custom params ---
     if (encoderInfo.customParamsKey != nullptr && !settings.GetCustomParams().empty()) {
         if (av_opt_set(ctx->priv_data, encoderInfo.customParamsKey, settings.GetCustomParams().c_str(), 0) < 0) {
             const std::string msg =
