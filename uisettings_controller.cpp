@@ -115,9 +115,14 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
             valuesVec.push_back(CQP);
         }
 
-        if (encoderInfo.qualityModes & VBR) {
+         if (encoderInfo.qualityModes & VBR) {
             textsVec.emplace_back("Variable Rate");
             valuesVec.push_back(VBR);
+        }
+
+        if (encoderInfo.qualityModes & CBR) {
+            textsVec.emplace_back("Constant Bit Rate (CBR)");
+            valuesVec.push_back(CBR);
         }
 
         item.MakeRadioBox("Quality Control", textsVec, valuesVec, qualityMode);
