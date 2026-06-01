@@ -6,7 +6,7 @@ const EncoderInfo X264Encoder::encoderInfo = {
     .fourCC = 'avc1',
     .encoder = "libx264",
     .hwAcceleration = None,
-    .qualityModes = CQP | CRF | VBR,
+    .qualityModes = CQP | CRF | VBR | CBR,
     .qp = {0, 23, 51},
     .presets =
         {
