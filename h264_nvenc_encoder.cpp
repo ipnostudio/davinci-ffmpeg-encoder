@@ -6,7 +6,7 @@ const EncoderInfo H264NvencEncoder::encoderInfo = {
     .fourCC = 'avc1',
     .encoder = "h264_nvenc",
     .hwAcceleration = Nvenc,
-    .qualityModes = CQP | VBR,
+    .qualityModes = CQP | VBR | CBR,
     .qp = {0, 0, 51},
     .presets =
         {
