@@ -48,3 +48,37 @@ encoding and advanced video CBR controls for content delivery platforms.
 1. Download `ffmpeg_encoder_plugin_windows.zip` from [Releases](../../releases)
 2. Extract the zip file
 3. Copy the folder `ffmpeg_encoder_plugin.dvcp.bundle` to:
+4. C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\IOPlugins\
+5. 4. Restart DaVinci Resolve Studio
+5. Go to **Deliver** page → select your format → the new encoders appear automatically
+
+---
+
+## 🎬 Usage in DaVinci Resolve
+
+### Video CBR (recommended for platforms)
+1. Deliver page → Format: `MP4`
+2. Video tab → Codec: `H.264` → Encoder: `x264 8-bit 4:2:0 (FFmpeg)`
+3. Quality Control: `Constant Bit Rate (CBR)`
+4. Set Bit Rate, Profile (`High`), Level (`4.1` for 1080p)
+5. Keyframe Interval: `30` frames
+
+### Audio AAC 320kb/s
+1. Audio tab → Codec: `AAC 320kb/s (FFmpeg)`
+2. Bit Rate: `320` kbps
+
+---
+
+## 📄 Credits & Licenses
+
+- Original plugin by [Edvin Nilsson](https://github.com/EdvinNilsson/ffmpeg_encoder_plugin) — GPL-3.0
+- Audio encoding: [libfdk_aac](https://github.com/mstorsjo/fdk-aac) — Fraunhofer FDK AAC License
+- Video encoding: [FFmpeg](https://ffmpeg.org/) — LGPL/GPL
+- This fork is released under **GPL-3.0**
+
+> ⚠️ libfdk_aac has its own license that restricts commercial distribution.  
+> This plugin is free for personal and non-commercial use.
+
+---
+
+DaVinci Resolve is a trademark of Blackmagic Design Pty. Ltd.
