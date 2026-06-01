@@ -5,11 +5,7 @@
 
 namespace IOPlugin {
 
-enum QualityMode : int32_t {
-    CQP = 1 << 0,
-    CRF = 1 << 1,
-    VBR = 1 << 2,
-};
+enum QualityMode { CRF = 1, CQP = 2, VBR = 4, CBR = 8 };
 
 class UISettingsController final {
    public:
