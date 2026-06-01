@@ -23,6 +23,9 @@ class UISettingsController final {
     int32_t GetBitRate() const;
     int32_t GetPreset() const;
     const std::string& GetCustomParams() const;
+    int32_t GetProfile() const;
+    int32_t GetLevel() const;
+    int32_t GetGOP() const;
 
    private:
     HostCodecConfigCommon commonProps;
@@ -34,11 +37,19 @@ class UISettingsController final {
     int32_t preset{};
     std::string customParams;
 
+    // Nuevos controles
+    int32_t profile{-1};   // -1 = Auto
+    int32_t level{-1};     // -1 = Auto
+    int32_t gop{30};       // fotogramas
+
     std::string qualityModeId;
     std::string qpId;
     std::string bitrateId;
     std::string presetId;
     std::string customParamsId;
+    std::string profileId;
+    std::string levelId;
+    std::string gopId;
 };
 
 }
