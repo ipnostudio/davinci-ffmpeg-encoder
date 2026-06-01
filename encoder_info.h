@@ -10,6 +10,7 @@ extern "C" {
 namespace IOPlugin {
 
 enum HardwareAcceleration { None, Vaapi, Nvenc };
+enum QualityMode { CRF = 1, CQP = 2, VBR = 4, CBR = 8 };
 
 struct EncoderFormat {
     const char* codecName{};
