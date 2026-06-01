@@ -5,8 +5,6 @@
 
 namespace IOPlugin {
 
-enum QualityMode { CRF = 1, CQP = 2, VBR = 4, CBR = 8 };
-
 class UISettingsController final {
    public:
     explicit UISettingsController(const EncoderInfo& encoderInfo);
