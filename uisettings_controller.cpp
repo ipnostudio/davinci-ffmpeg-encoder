@@ -158,7 +158,7 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
     {
         HostUIConfigEntryRef item(bitrateId);
         item.MakeSlider("Bit Rate", "kb/s", bitRate, 100, 100000, 1);
-        item.SetHidden(qualityMode != VBR);
+        item.SetHidden(qualityMode != VBR && qualityMode != CBR);
 
         if (!item.IsSuccess() || !settingsList->Append(&item)) {
             g_Log(logLevelError, "FFmpeg Plugin :: Failed to populate bitrate slider UI entry");
