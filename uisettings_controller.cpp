@@ -75,6 +75,8 @@ void UISettingsController::SetFirstSupportedQualityMode() {
             qualityMode = CQP;
         else if (encoderInfo.qualityModes & VBR)
             qualityMode = VBR;
+        else if (encoderInfo.qualityModes & CBR)
+            qualityMode = CBR;
     }
 }
 
