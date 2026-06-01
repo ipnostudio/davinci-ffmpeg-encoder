@@ -274,6 +274,19 @@ StatusCode FFmpegEncoder::ApplyOptions(AVCodecContext* ctx, UISettingsController
         case VBR:
             ctx->bit_rate = settings.GetBitRate();
             break;
+        case CBR:
+            ctx->bit_rate     = settings.GetBitRate();
+            ctx->rc_min_rate  = settings.GetBitRate();
+            ctx->rc_max_rate  = settings.GetBitRate();
+            ctx->rc_buffer_size = settings.GetBitRate() * 2;
+            if (encoderInfo.hwAcceleration == Nvenc) {
+                // NVENC tiene modo CBR nativo — más preciso que rc_min/max
+                av_opt_set(ctx->priv_data, "rc", "cbr", 0);
+            } else {
+                // x264 CBR via VBV + nal-hrd
+                av_opt_set(ctx->priv_data, "nal-hrd", "cbr", 0);
+            }
+            break;
     }
 
     if (useVaapi) {
