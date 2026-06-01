@@ -148,7 +148,7 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
         }
         item.MakeSlider("Factor", pLabel, qp, encoderInfo.qp[0], encoderInfo.qp[2], encoderInfo.qp[1]);
         item.SetTriggersUpdate(true);
-        item.SetHidden(qualityMode == VBR);
+        item.SetHidden(qualityMode == VBR || qualityMode == CBR);
         if (!item.IsSuccess() || !settingsList->Append(&item)) {
             g_Log(logLevelError, "FFmpeg Plugin :: Failed to populate qp slider UI entry");
             return errFail;
