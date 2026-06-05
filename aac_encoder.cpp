@@ -147,8 +147,9 @@ StatusCode AACEncoder::InitFFmpeg() {
 
     m_ctx->codecCtx->bit_rate    = (int64_t)m_bitRate * 1000;
     m_ctx->codecCtx->sample_fmt  = AV_SAMPLE_FMT_FLTP;
-    m_ctx->codecCtx->sample_rate = (int)m_sampleRate;
+    m_ctx->codecCtx->sample_rate = (int)m_sampleRate;    
     m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_NORMAL;
+    m_ctx->codecCtx->profile = FF_PROFILE_AAC_LOW;
     
     av_channel_layout_default(&m_ctx->codecCtx->ch_layout, (int)m_numChannels);
 
