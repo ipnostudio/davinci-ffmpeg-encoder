@@ -165,6 +165,18 @@ StatusCode AACEncoder::InitFFmpeg() {
     return errFail;
     } 
 
+    if (m_ctx->codecCtx->extradata && 
+        m_ctx->codecCtx->extradata_size > 0){
+    g_Log(logLevelWarn,
+        "AAC sending magic cookie size=%d",
+        m_ctx->codecCtx->extradata_size);        
+    SetProperty(
+        pIOPropMagicCookie,
+        propTypeUInt8,
+        m_ctx->codecCtx->extradata,
+        m_ctx->codecCtx->extradata_size);
+    }
+
     g_Log(logLevelWarn,
     "AAC profile=%d extradata_size=%d",
     m_ctx->codecCtx->profile,
