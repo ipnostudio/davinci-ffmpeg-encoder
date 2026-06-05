@@ -6,7 +6,6 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
-#include <libavcodec/profiles.h>
 #include <libavutil/channel_layout.h>
 }
 
