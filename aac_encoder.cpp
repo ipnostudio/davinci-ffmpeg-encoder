@@ -311,8 +311,7 @@ void AACEncoder::SendEncodedPackets() {
         if (outBuf.LockBuffer(&outData, &outSize) && outSize >= (size_t)m_ctx->pkt->size) {
             memcpy(outData, m_ctx->pkt->data, m_ctx->pkt->size);
             outBuf.UnlockBuffer();
-
-            outBuf.SetProperty(pIOPropBitDepth,    propTypeUInt32, &m_bitDepth,    1);
+          
             outBuf.SetProperty(pIOPropSamplingRate, propTypeUInt32, &m_sampleRate, 1);
             outBuf.SetProperty(pIOPropNumChannels,  propTypeUInt32, &m_numChannels,1);
 
