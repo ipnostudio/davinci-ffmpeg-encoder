@@ -107,7 +107,7 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
 
     if (m_sampleRate  == 0) m_sampleRate  = 48000;
     if (m_numChannels == 0) m_numChannels = 2;
-    if (m_bitDepth    == 0) m_bitDepth    = 16;
+    if (m_bitDepth    == 0) m_bitDepth    = 24;
 
     g_Log(logLevelWarn, "AAC Plugin :: DoOpen — SR=%u CH=%u BD=%u BR=%d",
           m_sampleRate, m_numChannels, m_bitDepth, m_bitRate);
@@ -158,17 +158,16 @@ StatusCode AACEncoder::InitFFmpeg() {
           m_ctx->codecCtx->ch_layout.nb_channels,
           m_ctx->codecCtx->bit_rate,
           m_ctx->codecCtx->profile);
-          // Forzar escritura del AudioSpecificConfig correcto en el contenedor
-          m_ctx->codecCtx->extradata      = nullptr;
-          m_ctx->codecCtx->extradata_size = 0;
-          av_opt_set_int(m_ctx->codecCtx, "aac_coder", 2, 0); // TWOLOOP coder — más compatible
-
+    
     if (avcodec_open2(m_ctx->codecCtx, codec, nullptr) < 0) {
+        g_Log(logLevelWarn, "AAC profile=%d extradata=%d", 
+           m_ctx->codecCtx->profile,
+           m_ctx->codecCtx->extradata_size);
         g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
-        avcodec_free_context(&m_ctx->codecCtx);
+        avcodec_free_context(&m_ctx->codecCtx);        
         return errFail;
     }
-
+    
     m_ctx->frameSize = m_ctx->codecCtx->frame_size;
     m_ctx->pts       = 0;
 
