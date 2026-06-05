@@ -160,12 +160,24 @@ StatusCode AACEncoder::InitFFmpeg() {
           m_ctx->codecCtx->profile);
     
     if (avcodec_open2(m_ctx->codecCtx, codec, nullptr) < 0) {
-        g_Log(logLevelWarn, "AAC profile=%d extradata=%d", 
-           m_ctx->codecCtx->profile,
-           m_ctx->codecCtx->extradata_size);
-        g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
-        avcodec_free_context(&m_ctx->codecCtx);        
-        return errFail;
+    g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
+    avcodec_free_context(&m_ctx->codecCtx);
+    return errFail;
+    }
+
+    g_Log(logLevelWarn,
+    "AAC profile=%d extradata_size=%d",
+    m_ctx->codecCtx->profile,
+    m_ctx->codecCtx->extradata_size);
+
+    if (m_ctx->codecCtx->extradata){
+        for (int i = 0; i < m_ctx->codecCtx->extradata_size; i++)
+        {
+            g_Log(logLevelWarn,
+            "AAC extradata[%d] = 0x%02X",
+            i,
+            m_ctx->codecCtx->extradata[i]);
+        }
     }
     
     m_ctx->frameSize = m_ctx->codecCtx->frame_size;
