@@ -216,18 +216,7 @@ StatusCode FFmpegEncoder::DoOpen(HostBufferRef* p_pBuff) {
 
     av_log_set_callback(logCallback);
 
-    const int ret = avcodec_open2(ctx, codec, nullptr);
-    if (m_ctx->codecCtx->extradata && 
-        m_ctx->codecCtx->extradata_size > 0){
-    g_Log(logLevelWarn,
-        "AAC sending magic cookie size=%d",
-        m_ctx->codecCtx->extradata_size);        
-    SetProperty(
-        pIOPropMagicCookie,
-        propTypeUInt8,
-        m_ctx->codecCtx->extradata,
-        m_ctx->codecCtx->extradata_size);
-    }
+    const int ret = avcodec_open2(ctx, codec, nullptr);    
 
     av_log_set_callback(av_log_default_callback);
 
