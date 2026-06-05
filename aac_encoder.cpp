@@ -163,7 +163,7 @@ StatusCode AACEncoder::InitFFmpeg() {
     g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
     avcodec_free_context(&m_ctx->codecCtx);
     return errFail;
-    }
+    } 
 
     g_Log(logLevelWarn,
     "AAC profile=%d extradata_size=%d",
