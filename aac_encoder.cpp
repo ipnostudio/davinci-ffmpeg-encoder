@@ -107,7 +107,7 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
 
     if (m_sampleRate  == 0) m_sampleRate  = 48000;
     if (m_numChannels == 0) m_numChannels = 2;
-    if (m_bitDepth    == 0) m_bitDepth    = 24;
+    if (m_bitDepth    == 0) m_bitDepth    = 16;
 
     g_Log(logLevelWarn, "AAC Plugin :: DoOpen — SR=%u CH=%u BD=%u BR=%d",
           m_sampleRate, m_numChannels, m_bitDepth, m_bitRate);
