@@ -34,12 +34,10 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
 
     const char* name = "AAC LC 320kb/s (FFmpeg)";
     codecInfo.SetProperty(pIOPropName, propTypeString, name, (int)strlen(name));
-
-    // FIX: FourCC específico de AAC-LC para que Resolve escriba mp4a-40-2
+   
     uint32_t fourCC = 'mp4a';
     codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);
-
-    // FIX: Codec ID explícito mp4a-40-2
+    
     const char* codecID = "mp4a-40-2";
     codecInfo.SetProperty(pIOPropCodecID, propTypeString, codecID, (int)strlen(codecID));
 
@@ -122,48 +120,33 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     StatusCode err = InitFFmpeg();
     if (err != errNone) return err;
 
-    // ASC para mp4a-40-2 (igual que antes)
-    // ... código del ASC sin cambios ...
-
-    // FIX: Forzar codec ID en el buffer de salida
     const char* codecID = "mp4a-40-2";
     p_pBuff->SetProperty(pIOPropCodecID, propTypeString, codecID, (int)strlen(codecID));
 
     return errNone;
 
-    // --- FIX: Escribir AudioSpecificConfig (ASC) correcto para mp4a-40-2 ---
-    // Construir manualmente el ASC de 2 bytes para AAC-LC:
-    //   Bits [0-4]  : Audio Object Type = 2 (AAC-LC)  → 00010
-    //   Bits [5-8]  : Sample Rate Index
-    //   Bits [9-12] : Channel Config
-    //
-    // Tabla de índices de sample rate AAC:
-    // 0=96000 1=88200 2=64000 3=48000 4=44100 5=32000
-    // 6=24000 7=22050 8=16000 9=12000 10=11025 11=8000 12=7350
-
     static const uint32_t srTable[] = {
         96000, 88200, 64000, 48000, 44100, 32000,
         24000, 22050, 16000, 12000, 11025, 8000, 7350
     };
-    uint8_t srIndex = 3; // default 48000
+    uint8_t srIndex = 3;
     for (uint8_t i = 0; i < 13; i++) {
         if (srTable[i] == m_sampleRate) { srIndex = i; break; }
     }
     uint8_t chConfig = (uint8_t)m_numChannels;
-
-    // AOT=2 (AAC-LC), empaquetado en 2 bytes:
-    // byte0 = (2 << 3) | (srIndex >> 1)
-    // byte1 = ((srIndex & 1) << 7) | (chConfig << 3)
+    
     uint8_t asc[2];
     asc[0] = (2 << 3) | (srIndex >> 1);
     asc[1] = ((srIndex & 1) << 7) | (chConfig << 3);
 
     p_pBuff->SetProperty(pIOPropMagicCookie, propTypeUInt8, asc, 2);
+    
+    uint32_t cookieType = 'esds';
+    p_pBuff->SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1); 
 
-    g_Log(logLevelWarn,
-          "AAC Plugin :: ASC written — AOT=2 (AAC-LC) SR=%u (idx=%u) CH=%u → 0x%02X 0x%02X",
+     g_Log(logLevelWarn,
+          "AAC Plugin :: ASC written — AOT=2 (AAC-LC) SR=%u (idx=%u) CH=%u → 0x%02X 0x%02X cookieType=esds",
           m_sampleRate, srIndex, m_numChannels, asc[0], asc[1]);
-    // --- FIN FIX ---
 
     return errNone;
 }
@@ -171,19 +154,14 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
 // ---------------------------------------------------------------------------
 // InitFFmpeg — separado para poder llamarlo desde DoOpen con certeza
 // ---------------------------------------------------------------------------
-StatusCode AACEncoder::InitFFmpeg() {
-    // Limpiar instancia previa si existe
+StatusCode AACEncoder::InitFFmpeg() {    
     if (m_ctx) {
         if (m_ctx->frame)    av_frame_free(&m_ctx->frame);
         if (m_ctx->pkt)      av_packet_free(&m_ctx->pkt);
         if (m_ctx->codecCtx) avcodec_free_context(&m_ctx->codecCtx);
         m_ctx.reset();
     }
-
-    // --- FIX: Sanitizar sample rate antes de inicializar FFmpeg ---
-    // ER Parametric (mp4a-40-27) y otros perfiles raros pueden llegar
-    // con frecuencias no soportadas por el encoder nativo (ej: 7350 Hz).
-    // Forzamos a 48000 Hz que es siempre válido.
+    
     const uint32_t validRates[] = { 8000, 11025, 12000, 16000, 22050,
                                     24000, 32000, 44100, 48000 };
     bool rateIsValid = false;
@@ -195,8 +173,7 @@ StatusCode AACEncoder::InitFFmpeg() {
               "AAC Plugin :: Unsupported SR=%u (ER Parametric/mp4a-40-27?), forcing 48000 Hz",
               m_sampleRate);
         m_sampleRate = 48000;
-    }
-    // --- FIN FIX ---
+    }   
 
     const AVCodec* codec = avcodec_find_encoder_by_name("libfdk_aac");
     if (!codec) {
@@ -386,6 +363,11 @@ void AACEncoder::SendEncodedPackets() {
 
             uint8_t isKey = 0;
             outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8, &isKey, 1);
+            
+            uint32_t cookieType = 'esds';
+            outBuf.SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1);            
+            uint32_t mp4aFourCC = 'mp4a';
+            outBuf.SetProperty(pIOPropFourCC, propTypeUInt32, &mp4aFourCC, 1);
 
             int64_t pts = m_ctx->pkt->pts;
             int64_t dur = m_ctx->pkt->duration;
