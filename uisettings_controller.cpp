@@ -150,16 +150,14 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
     }
 
     // --- Separador antes de controles avanzados ---
-    {
+    if (encoderInfo.supportsProfile || encoderInfo.supportsLevel || encoderInfo.supportsGOP) {
         HostUIConfigEntryRef sep("sep_advanced");
         sep.MakeSeparator();
         if (!sep.IsSuccess() || !settingsList->Append(&sep)) return errFail;
     }
 
-    // --- Perfil del encoder ---
-    // -1=Auto, 66=Baseline, 77=Main, 100=High
-    // Valores estándar H.264 (ITU-T H.264 Annex A)
-    {
+    // --- Perfil del encoder (solo encoders que lo soportan) ---
+    if (encoderInfo.supportsProfile) {
         HostUIConfigEntryRef item(profileId);
         item.MakeRadioBox("Encoder Profile",
             {"Auto", "Baseline", "Main", "High"},
@@ -172,9 +170,8 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
         }
     }
 
-    // --- Nivel del encoder ---
-    // -1=Auto, valores x10 para evitar floats: 41=4.1, 42=4.2 ... 52=5.2
-    {
+    // --- Nivel del encoder (solo encoders que lo soportan) ---
+    if (encoderInfo.supportsLevel) {
         HostUIConfigEntryRef item(levelId);
         item.MakeRadioBox("Encoder Level",
             {"Auto", "4.1  (Full HD)", "4.2  (Full HD HFR)", "5.0  (4K)", "5.1  (4K)", "5.2  (4K HFR)"},
@@ -187,8 +184,8 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
         }
     }
 
-    // --- GOP (fotogramas clave) ---
-    {
+    // --- GOP / Keyframe Interval (solo encoders que lo soportan) ---
+    if (encoderInfo.supportsGOP) {
         HostUIConfigEntryRef item(gopId);
         item.MakeSlider("Keyframe Interval", "frames", gop, 1, 300, 30);
         item.SetTriggersUpdate(false);
