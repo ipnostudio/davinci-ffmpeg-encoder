@@ -34,6 +34,11 @@ struct EncoderInfo {
     int defaultPreset{};
     const char* customParamsKey{};
     std::vector<EncoderFormat> formats{};
+
+    // Flags de UI — activa solo las opciones que soporta el encoder
+    bool supportsProfile{false};  // Baseline / Main / High
+    bool supportsLevel{false};    // 4.1 → 5.2
+    bool supportsGOP{false};      // Keyframe Interval
 };
 
 }
