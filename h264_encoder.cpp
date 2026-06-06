@@ -29,6 +29,9 @@ const EncoderInfo H264Encoder::encoderInfo = {
                 .pixelFormat = AV_PIX_FMT_P010,
             },
         },
+    .supportsProfile = true,
+    .supportsLevel   = true,
+    .supportsGOP     = true,
 };
 
 H264Encoder::H264Encoder(const int formatIndex) {
