@@ -122,6 +122,15 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
     StatusCode err = InitFFmpeg();
     if (err != errNone) return err;
 
+    // ASC para mp4a-40-2 (igual que antes)
+    // ... código del ASC sin cambios ...
+
+    // FIX: Forzar codec ID en el buffer de salida
+    const char* codecID = "mp4a-40-2";
+    p_pBuff->SetProperty(pIOPropCodecID, propTypeString, codecID, (int)strlen(codecID));
+
+    return errNone;
+
     // --- FIX: Escribir AudioSpecificConfig (ASC) correcto para mp4a-40-2 ---
     // Construir manualmente el ASC de 2 bytes para AAC-LC:
     //   Bits [0-4]  : Audio Object Type = 2 (AAC-LC)  → 00010
