@@ -35,8 +35,8 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     const char* name = "AAC LC 320kb/s (FFmpeg)";
     codecInfo.SetProperty(pIOPropName, propTypeString, name, (int)strlen(name));
    
-    uint32_t fourCC = 'mp4a';
-    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);    
+    uint32_t fourCC = 'aac ';
+    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);   
 
     uint32_t mediaType = mediaAudio;
     codecInfo.SetProperty(pIOPropMediaType, propTypeUInt32, &mediaType, 1);
@@ -356,12 +356,7 @@ void AACEncoder::SendEncodedPackets() {
             outBuf.SetProperty(pIOPropNumChannels,  propTypeUInt32, &m_numChannels,1);
 
             uint8_t isKey = 0;
-            outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8, &isKey, 1);
-            
-            uint32_t cookieType = 'esds';
-            outBuf.SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1);            
-            uint32_t mp4aFourCC = 'mp4a';
-            outBuf.SetProperty(pIOPropFourCC, propTypeUInt32, &mp4aFourCC, 1);
+            outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8, &isKey, 1);         
 
             int64_t pts = m_ctx->pkt->pts;
             int64_t dur = m_ctx->pkt->duration;
