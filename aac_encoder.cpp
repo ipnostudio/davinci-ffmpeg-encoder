@@ -131,7 +131,25 @@ StatusCode AACEncoder::InitFFmpeg() {
         m_ctx.reset();
     }
 
-   const AVCodec* codec = avcodec_find_encoder_by_name("libfdk_aac");
+    // --- FIX: Sanitizar sample rate antes de inicializar FFmpeg ---
+    // ER Parametric (mp4a-40-27) y otros perfiles raros pueden llegar
+    // con frecuencias no soportadas por el encoder nativo (ej: 7350 Hz).
+    // Forzamos a 48000 Hz que es siempre válido.
+    const uint32_t validRates[] = { 8000, 11025, 12000, 16000, 22050,
+                                    24000, 32000, 44100, 48000 };
+    bool rateIsValid = false;
+    for (uint32_t r : validRates) {
+        if (m_sampleRate == r) { rateIsValid = true; break; }
+    }
+    if (!rateIsValid) {
+        g_Log(logLevelWarn,
+              "AAC Plugin :: Unsupported SR=%u (ER Parametric/mp4a-40-27?), forcing 48000 Hz",
+              m_sampleRate);
+        m_sampleRate = 48000;
+    }
+    // --- FIN FIX ---
+
+    const AVCodec* codec = avcodec_find_encoder_by_name("libfdk_aac");
     if (!codec) {
         g_Log(logLevelWarn, "AAC Plugin :: libfdk_aac not found, using native AAC");
         codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
@@ -147,9 +165,15 @@ StatusCode AACEncoder::InitFFmpeg() {
 
     m_ctx->codecCtx->bit_rate    = (int64_t)m_bitRate * 1000;
     m_ctx->codecCtx->sample_fmt  = AV_SAMPLE_FMT_FLTP;
-    m_ctx->codecCtx->sample_rate = (int)m_sampleRate;    
-    m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_NORMAL;        
-    
+    m_ctx->codecCtx->sample_rate = (int)m_sampleRate;
+    m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_NORMAL;
+
+    // --- FIX: Forzar perfil AAC-LC explícitamente ---
+    // Sin esto, el encoder nativo queda en profile=-99 (UNKNOWN) cuando
+    // el stream origen era ER Parametric, y genera extradata incorrecto.
+    m_ctx->codecCtx->profile = FF_PROFILE_AAC_LOW;
+    // --- FIN FIX ---
+
     av_channel_layout_default(&m_ctx->codecCtx->ch_layout, (int)m_numChannels);
 
     g_Log(logLevelWarn, "AAC Plugin :: InitFFmpeg — SR=%d CH=%d BR=%lld profile=%d",
@@ -157,26 +181,11 @@ StatusCode AACEncoder::InitFFmpeg() {
           m_ctx->codecCtx->ch_layout.nb_channels,
           m_ctx->codecCtx->bit_rate,
           m_ctx->codecCtx->profile);
-    
-    if (avcodec_open2(m_ctx->codecCtx, codec, nullptr) < 0) {
-    g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
-    avcodec_free_context(&m_ctx->codecCtx);
-    return errFail;
-    } 
-    
-    g_Log(logLevelWarn,
-    "AAC profile=%d extradata_size=%d",
-    m_ctx->codecCtx->profile,
-    m_ctx->codecCtx->extradata_size);
 
-    if (m_ctx->codecCtx->extradata){
-        for (int i = 0; i < m_ctx->codecCtx->extradata_size; i++)
-        {
-            g_Log(logLevelWarn,
-            "AAC extradata[%d] = 0x%02X",
-            i,
-            m_ctx->codecCtx->extradata[i]);
-        }
+    if (avcodec_open2(m_ctx->codecCtx, codec, nullptr) < 0) {
+        g_Log(logLevelError, "AAC Plugin :: avcodec_open2 failed");
+        avcodec_free_context(&m_ctx->codecCtx);
+        return errFail;
     }
     
     m_ctx->frameSize = m_ctx->codecCtx->frame_size;
