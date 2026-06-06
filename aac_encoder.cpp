@@ -168,11 +168,11 @@ StatusCode AACEncoder::InitFFmpeg() {
     m_ctx->codecCtx->sample_rate = (int)m_sampleRate;
     m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_NORMAL;
 
-    // --- FIX: Forzar perfil AAC-LC explícitamente ---
-    // Sin esto, el encoder nativo queda en profile=-99 (UNKNOWN) cuando
-    // el stream origen era ER Parametric, y genera extradata incorrecto.
-    m_ctx->codecCtx->profile = FF_PROFILE_AAC_LOW;
-    // --- FIN FIX ---
+    #ifdef AV_PROFILE_AAC_LOW
+          m_ctx->codecCtx->profile = AV_PROFILE_AAC_LOW;
+    #else
+          m_ctx->codecCtx->profile = FF_PROFILE_AAC_LOW;
+    #endif
 
     av_channel_layout_default(&m_ctx->codecCtx->ch_layout, (int)m_numChannels);
 
