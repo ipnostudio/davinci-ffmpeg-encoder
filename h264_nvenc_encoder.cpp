@@ -38,6 +38,9 @@ const EncoderInfo H264NvencEncoder::encoderInfo = {
                 .pixelFormat = AV_PIX_FMT_P010,
             },
         },
+    .supportsProfile = true,
+    .supportsLevel   = true,
+    .supportsGOP     = true,
 };
 
 H264NvencEncoder::H264NvencEncoder(const int formatIndex) {
