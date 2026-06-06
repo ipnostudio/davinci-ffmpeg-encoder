@@ -167,13 +167,10 @@ StatusCode AACEncoder::InitFFmpeg() {
               "AAC Plugin :: Unsupported SR=%u (ER Parametric/mp4a-40-27?), forcing 48000 Hz",
               m_sampleRate);
         m_sampleRate = 48000;
-    }   
-
-    const AVCodec* codec = avcodec_find_encoder_by_name("libfdk_aac");
-    if (!codec) {
-        g_Log(logLevelWarn, "AAC Plugin :: libfdk_aac not found, using native AAC");
-        codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    }
+    } 
+    
+    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+    
     if (!codec) {
         g_Log(logLevelError, "AAC Plugin :: no AAC encoder found");
         return errFail;
