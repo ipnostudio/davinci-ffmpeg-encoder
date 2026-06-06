@@ -32,11 +32,16 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
 
     codecInfo.SetProperty(pIOPropUUID, propTypeUInt8, UUID, 16);
 
-    const char* name = "AAC 320kb/s (FFmpeg)";
+    const char* name = "AAC LC 320kb/s (FFmpeg)";
     codecInfo.SetProperty(pIOPropName, propTypeString, name, (int)strlen(name));
 
-    uint32_t fourCC = 'aac ';
+    // FIX: FourCC específico de AAC-LC para que Resolve escriba mp4a-40-2
+    uint32_t fourCC = 'mp4a';
     codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);
+
+    // FIX: Codec ID explícito mp4a-40-2
+    const char* codecID = "mp4a-40-2";
+    codecInfo.SetProperty(pIOPropCodecID, propTypeString, codecID, (int)strlen(codecID));
 
     uint32_t mediaType = mediaAudio;
     codecInfo.SetProperty(pIOPropMediaType, propTypeUInt32, &mediaType, 1);
@@ -56,7 +61,6 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
 
     return p_pList->Append(&codecInfo) ? errNone : errFail;
 }
-
 // ---------------------------------------------------------------------------
 StatusCode AACEncoder::GetEncoderSettings(HostPropertyCollectionRef* p_pValues,
                                            HostListRef* p_pSettingsList) {
