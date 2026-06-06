@@ -116,30 +116,35 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
 
     StatusCode err = InitFFmpeg();
     if (err != errNone) return err;
-    
-    return errNone;
 
+    // --- AudioSpecificConfig (ASC) para mp4a-40-2 (AAC-LC) ---
+    // Tabla de indices de sample rate AAC:
+    // 0=96000 1=88200 2=64000 3=48000 4=44100 5=32000
+    // 6=24000 7=22050 8=16000 9=12000 10=11025 11=8000 12=7350
     static const uint32_t srTable[] = {
         96000, 88200, 64000, 48000, 44100, 32000,
         24000, 22050, 16000, 12000, 11025, 8000, 7350
     };
-    uint8_t srIndex = 3;
+    uint8_t srIndex = 3; // default 48000
     for (uint8_t i = 0; i < 13; i++) {
         if (srTable[i] == m_sampleRate) { srIndex = i; break; }
     }
     uint8_t chConfig = (uint8_t)m_numChannels;
-    
+
+    // AOT=2 (AAC-LC) empaquetado en 2 bytes:
+    // byte0 = (2 << 3) | (srIndex >> 1)
+    // byte1 = ((srIndex & 1) << 7) | (chConfig << 3)
     uint8_t asc[2];
     asc[0] = (2 << 3) | (srIndex >> 1);
     asc[1] = ((srIndex & 1) << 7) | (chConfig << 3);
 
     p_pBuff->SetProperty(pIOPropMagicCookie, propTypeUInt8, asc, 2);
-    
-    uint32_t cookieType = 'esds';
-    p_pBuff->SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1); 
 
-     g_Log(logLevelWarn,
-          "AAC Plugin :: ASC written — AOT=2 (AAC-LC) SR=%u (idx=%u) CH=%u → 0x%02X 0x%02X cookieType=esds",
+    uint32_t cookieType = 'esds';
+    p_pBuff->SetProperty(pIOPropMagicCookieType, propTypeUInt32, &cookieType, 1);
+
+    g_Log(logLevelWarn,
+          "AAC Plugin :: ASC written — AOT=2 (AAC-LC) SR=%u (idx=%u) CH=%u — 0x%02X 0x%02X cookieType=esds",
           m_sampleRate, srIndex, m_numChannels, asc[0], asc[1]);
 
     return errNone;
@@ -170,7 +175,6 @@ StatusCode AACEncoder::InitFFmpeg() {
     } 
     
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    
     if (!codec) {
         g_Log(logLevelError, "AAC Plugin :: no AAC encoder found");
         return errFail;
@@ -181,8 +185,8 @@ StatusCode AACEncoder::InitFFmpeg() {
     if (!m_ctx->codecCtx) return errAlloc;
 
     m_ctx->codecCtx->bit_rate    = (int64_t)m_bitRate * 1000;
-    m_ctx->codecCtx->sample_fmt  = AV_SAMPLE_FMT_FLTP;
     m_ctx->codecCtx->sample_rate = (int)m_sampleRate;
+    m_ctx->codecCtx->sample_fmt  = AV_SAMPLE_FMT_FLTP;
     m_ctx->codecCtx->strict_std_compliance = FF_COMPLIANCE_NORMAL;
 
     #ifdef AV_PROFILE_AAC_LOW
@@ -216,7 +220,7 @@ StatusCode AACEncoder::InitFFmpeg() {
 
     m_ctx->pkt = av_packet_alloc();
 
-    // Ring buffer
+    // Ring buffer — siempre float internamente, se convierte al enviar
     m_channels  = m_numChannels;
     m_frameSize = (size_t)m_ctx->frameSize;
     m_ringBuf.assign(m_channels, std::vector<float>(m_frameSize, 0.0f));
