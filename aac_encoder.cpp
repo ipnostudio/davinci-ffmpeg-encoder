@@ -36,10 +36,7 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     codecInfo.SetProperty(pIOPropName, propTypeString, name, (int)strlen(name));
    
     uint32_t fourCC = 'mp4a';
-    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);
-    
-    const char* codecID = "mp4a-40-2";
-    codecInfo.SetProperty(pIOPropCodecID, propTypeString, codecID, (int)strlen(codecID));
+    codecInfo.SetProperty(pIOPropFourCC, propTypeUInt32, &fourCC, 1);    
 
     uint32_t mediaType = mediaAudio;
     codecInfo.SetProperty(pIOPropMediaType, propTypeUInt32, &mediaType, 1);
@@ -119,10 +116,7 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
 
     StatusCode err = InitFFmpeg();
     if (err != errNone) return err;
-
-    const char* codecID = "mp4a-40-2";
-    p_pBuff->SetProperty(pIOPropCodecID, propTypeString, codecID, (int)strlen(codecID));
-
+    
     return errNone;
 
     static const uint32_t srTable[] = {
