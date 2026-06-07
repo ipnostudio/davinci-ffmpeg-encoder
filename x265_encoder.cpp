@@ -77,9 +77,11 @@ const EncoderInfo X265Encoder::encoderInfo = {
                 .srcPixelFormat = AV_PIX_FMT_YUV444P16LE,
             },
         },
-};
-
-X265Encoder::X265Encoder(const int formatIndex) {
+    .supportsProfile = true,
+    .profileType     = ProfileH265,
+    .supportsLevel   = true,
+    .supportsGOP     = true,
+};(const int formatIndex) {
     FFmpegEncoder::encoderInfo = encoderInfo;
     FFmpegEncoder::formatIndex = formatIndex;
 }
