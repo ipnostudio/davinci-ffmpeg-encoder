@@ -29,6 +29,10 @@ const EncoderInfo H265Encoder::encoderInfo = {
                 .pixelFormat = AV_PIX_FMT_P010,
             },
         },
+    .supportsProfile = true,
+    .profileType     = ProfileH265,
+    .supportsLevel   = true,
+    .supportsGOP     = true,
 };
 
 H265Encoder::H265Encoder(const int formatIndex) {
