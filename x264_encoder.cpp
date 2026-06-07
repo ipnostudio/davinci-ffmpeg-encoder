@@ -77,6 +77,9 @@ const EncoderInfo X264Encoder::encoderInfo = {
                 .srcPixelFormat = AV_PIX_FMT_YUV444P16LE,
             },
         },
+    .supportsProfile = true,
+    .supportsLevel   = true,
+    .supportsGOP     = true,
 };
 
 X264Encoder::X264Encoder(const int formatIndex) {
