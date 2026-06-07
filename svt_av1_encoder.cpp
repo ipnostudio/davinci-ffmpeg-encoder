@@ -46,6 +46,7 @@ const EncoderInfo SvtAv1Encoder::encoderInfo = {
                 .srcPixelFormat = AV_PIX_FMT_P010,
             },
         },
+    .supportsGOP = true,
 };
 
 SvtAv1Encoder::SvtAv1Encoder(const int formatIndex) {
