@@ -159,10 +159,19 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
     // --- Perfil del encoder (solo encoders que lo soportan) ---
     if (encoderInfo.supportsProfile) {
         HostUIConfigEntryRef item(profileId);
-        item.MakeRadioBox("Encoder Profile",
-            {"Auto", "Baseline", "Main", "High"},
-            {-1, 66, 77, 100},
-            profile);
+        if (encoderInfo.profileType == ProfileH265) {
+            // H.265: Main (8-bit), Main10 (10-bit HDR), Main444 (4:4:4)
+            item.MakeRadioBox("Encoder Profile",
+                {"Auto", "Main", "Main10", "Main444"},
+                {-1, 1, 2, 4},
+                profile);
+        } else {
+            // H.264: Baseline, Main, High
+            item.MakeRadioBox("Encoder Profile",
+                {"Auto", "Baseline", "Main", "High"},
+                {-1, 66, 77, 100},
+                profile);
+        }
         item.SetTriggersUpdate(true);
         if (!item.IsSuccess() || !settingsList->Append(&item)) {
             g_Log(logLevelError, "FFmpeg Plugin :: Failed to populate profile UI entry");
@@ -173,10 +182,30 @@ StatusCode UISettingsController::RenderQuality(HostListRef* settingsList) const 
     // --- Nivel del encoder (solo encoders que lo soportan) ---
     if (encoderInfo.supportsLevel) {
         HostUIConfigEntryRef item(levelId);
-        item.MakeRadioBox("Encoder Level",
-            {"Auto", "4.1  (Full HD)", "4.2  (Full HD HFR)", "5.0  (4K)", "5.1  (4K)", "5.2  (4K HFR)"},
-            {-1, 41, 42, 50, 51, 52},
-            level);
+        if (encoderInfo.profileType == ProfileH265) {
+            // H.265: niveles extendidos incluyendo 6.x para 8K
+            item.MakeRadioBox("Encoder Level",
+                {"Auto",
+                 "4.1  (Full HD)",
+                 "5.0  (4K 30fps)",
+                 "5.1  (4K 60fps)",
+                 "5.2  (4K 120fps)",
+                 "6.0  (8K 30fps)",
+                 "6.1  (8K 60fps)"},
+                {-1, 41, 50, 51, 52, 60, 61},
+                level);
+        } else {
+            // H.264
+            item.MakeRadioBox("Encoder Level",
+                {"Auto",
+                 "4.1  (Full HD)",
+                 "4.2  (Full HD HFR)",
+                 "5.0  (4K)",
+                 "5.1  (4K)",
+                 "5.2  (4K HFR)"},
+                {-1, 41, 42, 50, 51, 52},
+                level);
+        }
         item.SetTriggersUpdate(true);
         if (!item.IsSuccess() || !settingsList->Append(&item)) {
             g_Log(logLevelError, "FFmpeg Plugin :: Failed to populate level UI entry");
