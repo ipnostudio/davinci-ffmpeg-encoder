@@ -11,6 +11,7 @@ namespace IOPlugin {
 
 enum HardwareAcceleration { None, Vaapi, Nvenc };
 enum QualityMode { CRF = 1, CQP = 2, VBR = 4, CBR = 8 };
+enum ProfileType { ProfileH264, ProfileH265 }; // Determina qué perfiles se muestran en UI
 
 struct EncoderFormat {
     const char* codecName{};
@@ -36,9 +37,10 @@ struct EncoderInfo {
     std::vector<EncoderFormat> formats{};
 
     // Flags de UI — activa solo las opciones que soporta el encoder
-    bool supportsProfile{false};  // Baseline / Main / High
-    bool supportsLevel{false};    // 4.1 → 5.2
-    bool supportsGOP{false};      // Keyframe Interval
+    bool        supportsProfile{false};           // Muestra opciones de perfil
+    ProfileType profileType{ProfileH264};         // H264: Baseline/Main/High — H265: Main/Main10/Main444
+    bool        supportsLevel{false};             // Muestra opciones de nivel
+    bool        supportsGOP{false};               // Muestra Keyframe Interval
 };
 
 }
