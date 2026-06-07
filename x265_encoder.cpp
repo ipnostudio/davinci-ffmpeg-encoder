@@ -81,7 +81,9 @@ const EncoderInfo X265Encoder::encoderInfo = {
     .profileType     = ProfileH265,
     .supportsLevel   = true,
     .supportsGOP     = true,
-};(const int formatIndex) {
+};
+
+X265Encoder::X265Encoder(const int formatIndex) {
     FFmpegEncoder::encoderInfo = encoderInfo;
     FFmpegEncoder::formatIndex = formatIndex;
 }
