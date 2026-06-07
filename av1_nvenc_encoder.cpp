@@ -38,6 +38,7 @@ const EncoderInfo Av1NvencEncoder::encoderInfo = {
                 .pixelFormat = AV_PIX_FMT_P010,
             },
         },
+    .supportsGOP = true,
 };
 
 Av1NvencEncoder::Av1NvencEncoder(const int formatIndex) {
