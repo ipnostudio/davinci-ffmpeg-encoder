@@ -6,7 +6,18 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v4
+
+    # Activa el entorno de compilación de MSVC (cl.exe, link.exe, etc.)
+    # Esto es equivalente a abrir "Developer Command Prompt for VS 2022"
+    - name: Setup MSVC environment
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install Ninja
+      run: choco install ninja -y
+      shell: pwsh
 
     - name: Download FFmpeg
       run: |
@@ -20,7 +31,13 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -G "Visual Studio 17 2022" -A x64 -DFFMPEG_DIR="${{ github.workspace }}/ffmpeg"
+        # Ninja + cl.exe es más confiable en CI que el generador de VS
+        cmake .. `
+          -G Ninja `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DCMAKE_C_COMPILER=cl `
+          -DCMAKE_CXX_COMPILER=cl `
+          -DFFMPEG_DIR="${{ github.workspace }}/ffmpeg"
       shell: pwsh
 
     - name: Build Plugin
@@ -35,15 +52,29 @@ jobs:
         New-Item -ItemType Directory -Force -Path $bundlePath
 
         # Copiar el .dvcp compilado
-        Copy-Item "build/Release/ffmpeg_encoder_plugin.dvcp" $bundlePath
+        # Con Ninja el output va directo en build/, no en build/Release/
+        Copy-Item "build/ffmpeg_encoder_plugin.dvcp" $bundlePath
 
-        # Copiar las DLLs necesarias de FFmpeg
+        # Copiar las DLLs de FFmpeg (las que existan — fdk-aac es opcional)
         $ffmpegBin = "ffmpeg/bin"
-        Get-ChildItem "$ffmpegBin/avcodec-*.dll"    | Copy-Item -Destination $bundlePath
-        Get-ChildItem "$ffmpegBin/avutil-*.dll"     | Copy-Item -Destination $bundlePath
-        Get-ChildItem "$ffmpegBin/swscale-*.dll"    | Copy-Item -Destination $bundlePath
-        Get-ChildItem "$ffmpegBin/swresample-*.dll" | Copy-Item -Destination $bundlePath
-        Get-ChildItem "$ffmpegBin/libfdk-aac-*.dll" | Copy-Item -Destination $bundlePath
+        $dllPatterns = @("avcodec-*.dll", "avutil-*.dll", "swscale-*.dll", "swresample-*.dll")
+        foreach ($pattern in $dllPatterns) {
+          $files = Get-ChildItem "$ffmpegBin/$pattern" -ErrorAction SilentlyContinue
+          if ($files) {
+            $files | Copy-Item -Destination $bundlePath
+          } else {
+            Write-Warning "No se encontró: $pattern"
+          }
+        }
+
+        # libfdk-aac es opcional — solo existe en builds que lo incluyen
+        $fdkFiles = Get-ChildItem "$ffmpegBin/libfdk-aac-*.dll" -ErrorAction SilentlyContinue
+        if ($fdkFiles) {
+          $fdkFiles | Copy-Item -Destination $bundlePath
+          Write-Host "libfdk-aac incluido."
+        } else {
+          Write-Host "libfdk-aac no encontrado en este build de FFmpeg (esperado con gyan.dev shared)."
+        }
       shell: pwsh
 
     - uses: actions/upload-artifact@v4
