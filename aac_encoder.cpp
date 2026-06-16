@@ -54,6 +54,23 @@ StatusCode AACEncoder::RegisterCodec(HostListRef* p_pList) {
     codecInfo.SetProperty(pIOPropContainerList, propTypeString,
                           containers, sizeof(containers));
 
+    // FIX #3: Declarar el retardo del encoder AAC-LC (2112 muestras estándar).
+    // Sin esto Resolve no descarta las muestras de priming y el audio
+    // queda desincronizado respecto al video.
+    uint32_t decoderDelay = 2112;
+    codecInfo.SetProperty(pIOPropDecoderDelay, propTypeUInt32, &decoderDelay, 1);
+
+    // FIX #4: Declarar los channel layouts soportados.
+    // Sin esto Resolve no sabe qué configuraciones acepta el codec
+    // y puede enviar audio con un layout inesperado (silencio o canales mezclados).
+    uint32_t layouts[] = { audLayoutMono, audLayoutStereo, audLayoutGeneric5_1 };
+    codecInfo.SetProperty(pIOPropAudioChannelLayout, propTypeUInt32, layouts, 3);
+
+    // FIX #5: Declarar que Resolve debe enviar PCM entero (no float).
+    // El encoder convierte internamente a FLTP en DoProcess.
+    uint8_t isFloat = 0;
+    codecInfo.SetProperty(pIOPropIsFloat, propTypeUInt8, &isFloat, 1);
+
     return p_pList->Append(&codecInfo) ? errNone : errFail;
 }
 // ---------------------------------------------------------------------------
@@ -112,7 +129,7 @@ StatusCode AACEncoder::DoOpen(HostBufferRef* p_pBuff) {
           m_sampleRate, m_numChannels, m_bitDepth, m_bitRate);
 
     uint64_t br = (uint64_t)m_bitRate * 1000;
-    p_pBuff->SetProperty(pIOPropBitRate, propTypeUInt32, &br, 1);
+    p_pBuff->SetProperty(pIOPropBitRate, propTypeUInt64, &br, 1);  // FIX #1: pIOPropBitRate es uint64_t
 
     StatusCode err = InitFFmpeg();
     if (err != errNone) return err;
@@ -334,8 +351,10 @@ StatusCode AACEncoder::DoProcess(HostBufferRef* p_pBuff) {
 
 // ---------------------------------------------------------------------------
 void AACEncoder::DoFlush() {
-    if (m_ctx && m_ctx->codecCtx)
-        avcodec_flush_buffers(m_ctx->codecCtx);
+    // FIX #2: avcodec_flush_buffers() descarta paquetes pendientes.
+    // DoProcess(nullptr) drena correctamente el ring buffer residual
+    // y envía el flush al encoder para recuperar los últimos frames.
+    DoProcess(nullptr);
 }
 
 // ---------------------------------------------------------------------------
